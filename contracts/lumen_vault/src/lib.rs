@@ -1,6 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    MuxedAddress,
 };
 
 #[contracterror]
@@ -13,6 +14,9 @@ pub enum Error {
     Paused = 4,
     NoPendingOwner = 5,
     Overflow = 6,
+    BelowMinimumDeposit = 7,
+    ExceedsMaxBalance = 8,
+    CannotRescueVaultToken = 9,
 }
 
 #[contracttype]
@@ -20,8 +24,11 @@ pub enum Error {
 pub enum DataKey {
     Owner,
     PendingOwner,
+    Token,
     Balance,
     Paused,
+    MinDeposit,
+    MaxBalance,
 }
 
 #[contractevent]
@@ -62,6 +69,25 @@ pub struct OwnerTransferred {
     pub new_owner: Address,
 }
 
+#[contractevent]
+pub struct MinDepositUpdated {
+    pub min_deposit: i128,
+}
+
+#[contractevent]
+pub struct MaxBalanceUpdated {
+    pub max_balance: Option<i128>,
+}
+
+#[contractevent]
+pub struct Rescued {
+    #[topic]
+    pub token: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+}
+
 #[contract]
 pub struct LumenVault;
 
@@ -69,11 +95,26 @@ pub struct LumenVault;
 impl LumenVault {
     /// Runs atomically with contract creation, so there is no window in
     /// which an unrelated caller could front-run `initialize` and claim
-    /// ownership of the vault.
-    pub fn __constructor(env: Env, owner: Address) {
+    /// ownership of the vault. `token` is the SEP-41 asset this vault
+    /// actually custodies — deposits and withdrawals move real balances
+    /// of it, they don't just increment an internal counter.
+    pub fn __constructor(
+        env: Env,
+        owner: Address,
+        token: Address,
+        min_deposit: i128,
+        max_balance: Option<i128>,
+    ) {
         env.storage().instance().set(&DataKey::Owner, &owner);
+        env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Balance, &0i128);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinDeposit, &min_deposit);
+        if let Some(max) = max_balance {
+            env.storage().instance().set(&DataKey::MaxBalance, &max);
+        }
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) -> Result<i128, Error> {
@@ -84,9 +125,25 @@ impl LumenVault {
         if Self::is_paused(&env) {
             return Err(Error::Paused);
         }
+        if amount < Self::read_min_deposit(&env) {
+            return Err(Error::BelowMinimumDeposit);
+        }
 
         let balance = Self::read_balance(&env);
         let new_balance = balance.checked_add(amount).ok_or(Error::Overflow)?;
+        if let Some(max) = Self::read_max_balance(&env) {
+            if new_balance > max {
+                return Err(Error::ExceedsMaxBalance);
+            }
+        }
+
+        let token_client = token::TokenClient::new(&env, &Self::read_token(&env));
+        token_client.transfer(
+            &from,
+            MuxedAddress::from(env.current_contract_address()),
+            &amount,
+        );
+
         env.storage()
             .instance()
             .set(&DataKey::Balance, &new_balance);
@@ -109,6 +166,14 @@ impl LumenVault {
         env.storage()
             .instance()
             .set(&DataKey::Balance, &new_balance);
+
+        let token_client = token::TokenClient::new(&env, &Self::read_token(&env));
+        token_client.transfer(
+            &env.current_contract_address(),
+            MuxedAddress::from(owner.clone()),
+            &amount,
+        );
+
         Withdraw { owner, amount }.publish(&env);
         Ok(new_balance)
     }
@@ -126,6 +191,48 @@ impl LumenVault {
         owner.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
         Resumed { owner }.publish(&env);
+        Ok(())
+    }
+
+    pub fn set_min_deposit(env: Env, min_deposit: i128) -> Result<(), Error> {
+        let owner = Self::read_owner(&env)?;
+        owner.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::MinDeposit, &min_deposit);
+        MinDepositUpdated { min_deposit }.publish(&env);
+        Ok(())
+    }
+
+    /// Pass `None` to remove the cap entirely.
+    pub fn set_max_balance(env: Env, max_balance: Option<i128>) -> Result<(), Error> {
+        let owner = Self::read_owner(&env)?;
+        owner.require_auth();
+        match max_balance {
+            Some(max) => env.storage().instance().set(&DataKey::MaxBalance, &max),
+            None => env.storage().instance().remove(&DataKey::MaxBalance),
+        }
+        MaxBalanceUpdated { max_balance }.publish(&env);
+        Ok(())
+    }
+
+    /// Recovers a token *other than* this vault's own accounted asset,
+    /// sent to the vault's address by mistake (e.g. a wrong-asset
+    /// transfer that bypassed `deposit`). Cannot touch the vault's own
+    /// token — that balance is depositors' funds, not stray tokens.
+    pub fn rescue(env: Env, token: Address, to: Address, amount: i128) -> Result<(), Error> {
+        let owner = Self::read_owner(&env)?;
+        owner.require_auth();
+        if token == Self::read_token(&env) {
+            return Err(Error::CannotRescueVaultToken);
+        }
+        let token_client = token::TokenClient::new(&env, &token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            MuxedAddress::from(to.clone()),
+            &amount,
+        );
+        Rescued { token, to, amount }.publish(&env);
         Ok(())
     }
 
@@ -170,6 +277,18 @@ impl LumenVault {
         env.storage().instance().get(&DataKey::PendingOwner)
     }
 
+    pub fn token(env: Env) -> Address {
+        Self::read_token(&env)
+    }
+
+    pub fn min_deposit(env: Env) -> i128 {
+        Self::read_min_deposit(&env)
+    }
+
+    pub fn max_balance(env: Env) -> Option<i128> {
+        Self::read_max_balance(&env)
+    }
+
     pub fn paused(env: Env) -> bool {
         Self::is_paused(&env)
     }
@@ -192,6 +311,24 @@ impl LumenVault {
             .instance()
             .get(&DataKey::Owner)
             .ok_or(Error::NotInitialized)
+    }
+
+    fn read_token(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Token)
+            .expect("not initialized")
+    }
+
+    fn read_min_deposit(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinDeposit)
+            .unwrap_or(0)
+    }
+
+    fn read_max_balance(env: &Env) -> Option<i128> {
+        env.storage().instance().get(&DataKey::MaxBalance)
     }
 
     fn is_paused(env: &Env) -> bool {
