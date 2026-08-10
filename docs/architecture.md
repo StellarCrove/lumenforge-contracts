@@ -36,7 +36,7 @@ LumenForge is a two-contract vault protocol on Soroban:
 **Public functions:**
 
 ```rust
-fn __constructor(env: Env, owner: Address, token: Address, min_deposit: i128, max_balance: Option<i128>)
+fn __constructor(env: Env, owner: Address, token: Address, min_deposit: i128, max_balance: Option<i128>) -> Result<(), Error>
 fn deposit(env: Env, from: Address, amount: i128) -> Result<i128, Error>
 fn withdraw(env: Env, amount: i128) -> Result<i128, Error>
 fn pause(env: Env) -> Result<(), Error>
@@ -77,11 +77,17 @@ published interface spec.
 fn __constructor(env: Env, vault_wasm_hash: BytesN<32>)
 fn deploy_vault(env: Env, owner: Address, token: Address, min_deposit: i128, max_balance: Option<i128>, salt: BytesN<32>) -> Result<Address, Error>
 fn vault_count(env: Env) -> u32
-fn vaults_by_owner(env: Env, owner: Address) -> Vec<Address>
+fn vaults_by_owner(env: Env, owner: Address, offset: u32, limit: u32) -> Vec<Address>
 fn vault_wasm_hash(env: Env) -> Result<BytesN<32>, Error>
 fn extend_ttl(env: Env, threshold: u32, extend_to: u32)
-fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_to: u32)
+fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_to: u32) -> Result<(), Error>
 ```
+
+`vaults_by_owner` is paginated (`offset`/`limit`) rather than returning
+the full list — see the "unbounded vector" note in
+[`docs/security.md`](security.md#known-limitations). `extend_vaults_by_owner_ttl`
+returns `Error::NoVaultsForOwner` if the given owner has never deployed a
+vault through this factory, instead of failing at the host level.
 
 `deploy_vault` requires `owner.require_auth()` — only the address that
 will own the new vault can trigger its deployment, so the factory cannot
@@ -128,6 +134,16 @@ the cost of not being suitable for pooled, multi-party custody without an
 accompanying off-chain or SDK-level ledger of individual contributions.
 Multi-party custody is out of scope — the factory exists so that each
 party who wants a vault gets their *own* instance instead.
+
+## Input Validation
+
+`min_deposit` and `max_balance` are validated wherever they're set — at
+construction, and again in `set_min_deposit`/`set_max_balance` — via a
+shared `validate_deposit_bounds` check that rejects negative values with
+`Error::InvalidConfiguration`. Deliberately *not* rejected:
+`max_balance < min_deposit`, which an owner can use as a stronger
+"no new deposits will ever fit" gate than `pause` (e.g.
+`max_balance = Some(0)`).
 
 ## Recovering Stray Assets
 

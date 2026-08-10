@@ -49,12 +49,13 @@
 
 Soroban's execution model does not permit the classic EVM-style
 reentrancy pattern (no fallback-triggered external calls mid-execution),
-so this is not treated as a primary risk. `deposit`/`withdraw` update
-`Balance` and then invoke the token's `transfer` — since a Soroban
-transaction is all-or-nothing (a panic anywhere in the call tree reverts
-every storage write in it), there is no partial-application window
-regardless of ordering, but state is still kept in its natural
-checks-effects-interactions order for clarity.
+so this is not treated as a primary risk. Since a Soroban transaction is
+all-or-nothing (a panic anywhere in the call tree reverts every storage
+write in it), there is no partial-application window regardless of
+ordering — but `deposit` and `withdraw` both still update `Balance`
+*before* invoking the token's `transfer`, consistently following
+checks-effects-interactions as a defensive default rather than relying
+solely on transaction atomicity.
 
 ## Arithmetic
 
@@ -96,13 +97,16 @@ self-triggering keeper on-chain (Soroban contracts can't wake themselves
 up). This needs an off-chain cron/keeper before mainnet use, or
 integrators must be told to call it themselves periodically.
 
-### 2. `VaultsByOwner` is an unbounded vector
+### 2. `VaultsByOwner` is still an unbounded *write*, even though reads are paginated
 
-An owner who deploys a very large number of vaults through the factory
-grows their `VaultsByOwner` entry without bound, increasing the cost of
-reading/writing it. There is no pagination on `vaults_by_owner`. Fine for
-the expected use case (a handful of vaults per owner); would need
-revisiting for a use case with unbounded per-owner vault counts.
+`vaults_by_owner` takes `offset`/`limit` now, so *reading* a large list
+is bounded. `deploy_vault` still appends to the same unbounded
+`Vec<Address>` on every deployment, though, so the cost of that one
+`push_back` (and the underlying entry's storage footprint) still grows
+without bound for an owner who deploys a very large number of vaults.
+Fine for the expected use case (a handful of vaults per owner); would
+need revisiting (e.g. a paginated/sharded write path) for a use case with
+unbounded per-owner vault counts.
 
 ### 3. No per-depositor accounting
 
@@ -149,6 +153,17 @@ should be aware the owner has this reach.
   — `rescue` added, explicitly barred from moving the vault's own token.
 - ~~No deposit-size controls~~ — `min_deposit`/`max_balance`, both
   owner-adjustable via `set_min_deposit`/`set_max_balance`.
+- ~~No input validation on `min_deposit`/`max_balance`~~ — negative
+  values now rejected with `Error::InvalidConfiguration`, checked at
+  construction and in both setters via a shared
+  `validate_deposit_bounds` helper.
+- ~~No validation on `rescue`'s amount~~ — non-positive amounts now
+  rejected with `Error::InvalidAmount`, same as `deposit`/`withdraw`.
+- ~~Reading a large `VaultsByOwner` list was all-or-nothing~~ —
+  `vaults_by_owner` now takes `offset`/`limit`. The underlying write
+  path is still unbounded; see Known Limitation #2.
+- ~~`extend_vaults_by_owner_ttl` panicked at the host level for an owner
+  with no vaults~~ — now returns `Error::NoVaultsForOwner` instead.
 
 ## Disclosure
 

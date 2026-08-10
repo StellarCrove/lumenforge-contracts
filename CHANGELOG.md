@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.3.1 / lumen_vault_factory 0.3.0 - 2026-08-10
+
+### Added
+
+- `contractmeta!` name/description on both contracts.
+- Input validation: `min_deposit`/`max_balance` reject negative values
+  (`Error::InvalidConfiguration`) at construction and in
+  `set_min_deposit`/`set_max_balance`; `rescue` rejects non-positive
+  amounts (`Error::InvalidAmount`), matching `deposit`/`withdraw`.
+- `vaults_by_owner(owner, offset, limit)` — paginated reads instead of
+  returning the whole (potentially large) vault list at once.
+- `extend_vaults_by_owner_ttl` now returns `Error::NoVaultsForOwner`
+  instead of panicking at the host level when the owner has no vaults.
+- Tests for every new validation path and for pagination.
+
+### Changed
+
+- **Breaking**: `LumenVaultFactory::vaults_by_owner` and
+  `extend_vaults_by_owner_ttl` signatures changed (pagination args;
+  `Result` return).
+- `deposit` now updates `Balance` *before* calling the token's
+  `transfer`, matching `withdraw`'s ordering and consistently following
+  checks-effects-interactions (previously the only function that did the
+  external call first).
+- `LumenVault::__constructor` now returns `Result<(), Error>` so invalid
+  `min_deposit`/`max_balance` at deploy time fails cleanly instead of
+  deploying a vault whose bounds were silently accepted.
+
 ## [0.3.0] - 2026-08-10
 
 ### Added
