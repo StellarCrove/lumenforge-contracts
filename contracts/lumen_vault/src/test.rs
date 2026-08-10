@@ -243,3 +243,76 @@ fn extend_ttl_does_not_panic() {
 
     client.extend_ttl(&100, &1000);
 }
+
+#[test]
+fn constructor_rejects_negative_min_deposit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        deploy(&env, &owner, &s.token_id, -1, None)
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+fn constructor_rejects_negative_max_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        deploy(&env, &owner, &s.token_id, 0, Some(-1))
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+fn set_min_deposit_rejects_negative() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+
+    let result = client.try_set_min_deposit(&-1);
+    assert_eq!(result, Err(Ok(Error::InvalidConfiguration)));
+}
+
+#[test]
+fn set_max_balance_rejects_negative() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+
+    let result = client.try_set_max_balance(&Some(-1));
+    assert_eq!(result, Err(Ok(Error::InvalidConfiguration)));
+}
+
+#[test]
+fn rescue_rejects_non_positive_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+
+    let other_admin = Address::generate(&env);
+    let other_token = env
+        .register_stellar_asset_contract_v2(other_admin)
+        .address();
+    let recipient = Address::generate(&env);
+
+    let result = client.try_rescue(&other_token, &recipient, &0);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+}

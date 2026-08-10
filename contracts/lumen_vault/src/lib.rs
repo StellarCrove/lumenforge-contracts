@@ -1,8 +1,16 @@
 #![no_std]
+#[cfg(test)]
+extern crate std;
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    MuxedAddress,
+    contract, contracterror, contractevent, contractimpl, contractmeta, contracttype, token,
+    Address, Env, MuxedAddress,
 };
+
+contractmeta!(key = "Name", val = "lumen_vault");
+contractmeta!(
+    key = "Description",
+    val = "Owner-gated SEP-41 deposit/withdraw vault"
+);
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -17,6 +25,7 @@ pub enum Error {
     BelowMinimumDeposit = 7,
     ExceedsMaxBalance = 8,
     CannotRescueVaultToken = 9,
+    InvalidConfiguration = 10,
 }
 
 #[contracttype]
@@ -104,7 +113,9 @@ impl LumenVault {
         token: Address,
         min_deposit: i128,
         max_balance: Option<i128>,
-    ) {
+    ) -> Result<(), Error> {
+        Self::validate_deposit_bounds(min_deposit, max_balance)?;
+
         env.storage().instance().set(&DataKey::Owner, &owner);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Balance, &0i128);
@@ -115,6 +126,7 @@ impl LumenVault {
         if let Some(max) = max_balance {
             env.storage().instance().set(&DataKey::MaxBalance, &max);
         }
+        Ok(())
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) -> Result<i128, Error> {
@@ -137,6 +149,10 @@ impl LumenVault {
             }
         }
 
+        env.storage()
+            .instance()
+            .set(&DataKey::Balance, &new_balance);
+
         let token_client = token::TokenClient::new(&env, &Self::read_token(&env));
         token_client.transfer(
             &from,
@@ -144,9 +160,6 @@ impl LumenVault {
             &amount,
         );
 
-        env.storage()
-            .instance()
-            .set(&DataKey::Balance, &new_balance);
         Deposit { from, amount }.publish(&env);
         Ok(new_balance)
     }
@@ -197,6 +210,7 @@ impl LumenVault {
     pub fn set_min_deposit(env: Env, min_deposit: i128) -> Result<(), Error> {
         let owner = Self::read_owner(&env)?;
         owner.require_auth();
+        Self::validate_deposit_bounds(min_deposit, Self::read_max_balance(&env))?;
         env.storage()
             .instance()
             .set(&DataKey::MinDeposit, &min_deposit);
@@ -208,6 +222,7 @@ impl LumenVault {
     pub fn set_max_balance(env: Env, max_balance: Option<i128>) -> Result<(), Error> {
         let owner = Self::read_owner(&env)?;
         owner.require_auth();
+        Self::validate_deposit_bounds(Self::read_min_deposit(&env), max_balance)?;
         match max_balance {
             Some(max) => env.storage().instance().set(&DataKey::MaxBalance, &max),
             None => env.storage().instance().remove(&DataKey::MaxBalance),
@@ -223,6 +238,9 @@ impl LumenVault {
     pub fn rescue(env: Env, token: Address, to: Address, amount: i128) -> Result<(), Error> {
         let owner = Self::read_owner(&env)?;
         owner.require_auth();
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
         if token == Self::read_token(&env) {
             return Err(Error::CannotRescueVaultToken);
         }
@@ -329,6 +347,23 @@ impl LumenVault {
 
     fn read_max_balance(env: &Env) -> Option<i128> {
         env.storage().instance().get(&DataKey::MaxBalance)
+    }
+
+    /// `max_balance < min_deposit` is deliberately allowed — an owner can
+    /// use it as a stronger "no new deposits will ever fit" gate than
+    /// `pause` (e.g. `max_balance = Some(0)`), without that being an
+    /// input-validation error. Only genuinely nonsensical values
+    /// (negative amounts) are rejected.
+    fn validate_deposit_bounds(min_deposit: i128, max_balance: Option<i128>) -> Result<(), Error> {
+        if min_deposit < 0 {
+            return Err(Error::InvalidConfiguration);
+        }
+        if let Some(max) = max_balance {
+            if max < 0 {
+                return Err(Error::InvalidConfiguration);
+            }
+        }
+        Ok(())
     }
 
     fn is_paused(env: &Env) -> bool {
