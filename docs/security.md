@@ -4,29 +4,40 @@
 
 ### Assets at risk
 
-- Tokens/native balance represented by the `BALANCE` ledger value.
+- Tokens/native balance represented by each vault's `Balance` ledger
+  value.
 - Availability of `withdraw` for the legitimate owner.
+- Correctness of the factory's `VaultsByOwner` index (an integrity, not a
+  funds, risk — the index is informational, not authoritative; a vault's
+  own `owner()` is always the source of truth for who controls it).
 
 ### Trusted parties
 
-- The address passed to `initialize` is fully trusted with the entire
-  balance. There is no recovery mechanism if that key is lost or
-  compromised.
+- The address set as `owner` at deployment is fully trusted with the
+  entire balance. There is no recovery mechanism if that key is lost or
+  compromised, beyond a successful `propose_owner`/`accept_owner` run
+  *before* the key is lost.
 
 ## Authentication
 
 - `deposit` requires `from.require_auth()` — a caller can only deposit on
   behalf of an address that has authorized the invocation.
-- `withdraw` requires `owner.require_auth()`, where `owner` is read from
-  storage rather than taken as a caller-supplied argument. This prevents a
-  caller from claiming ownership by simply passing their own address.
+- `withdraw`, `pause`, `unpause`, and `propose_owner` all require
+  `owner.require_auth()`, where `owner` is read from storage rather than
+  taken as a caller-supplied argument — a caller cannot claim ownership by
+  simply passing their own address.
+- `accept_owner` requires `pending_owner.require_auth()`, proving control
+  of the proposed address before ownership actually moves.
+- `LumenVaultFactory::deploy_vault` requires `owner.require_auth()`: a
+  caller can only deploy a vault *for themselves*, not on behalf of an
+  arbitrary address.
 
 ## Reentrancy
 
-Soroban's execution model does not permit the classic EVM-style reentrancy
-pattern (no fallback-triggered external calls mid-execution), so this is
-not treated as a primary risk. State (`BALANCE`) is updated before the
-function returns in both `deposit` and `withdraw`, consistent with
+Soroban's execution model does not permit the classic EVM-style
+reentrancy pattern (no fallback-triggered external calls mid-execution),
+so this is not treated as a primary risk. State is updated before events
+are published in every state-changing function, consistent with
 checks-effects-interactions as a defensive default.
 
 ## Arithmetic
@@ -36,39 +47,57 @@ checks-effects-interactions as a defensive default.
 - `deposit` and `withdraw` both reject non-positive amounts.
 - `withdraw` rejects amounts greater than the current balance, preventing
   underflow.
-- Overflow on `deposit` (balance + amount) is not currently checked
-  explicitly; it relies on the Soroban host's panic-on-overflow behavior
-  for arithmetic operations in debug builds. See Known Limitations.
+- `deposit`'s balance increment uses `checked_add`, returning
+  `Error::Overflow` instead of panicking or wrapping if it would exceed
+  `i128::MAX`.
 
 ## Known Limitations
 
-### 1. `initialize` is not access-controlled
+### 1. No TTL/rent management
 
-Any address can call `initialize` before the legitimate deployer does,
-becoming the owner. Deployers must call `initialize` in the same
-transaction/flow as contract creation, or otherwise ensure no other
-transaction can front-run it.
+Instance and persistent storage entries (in particular
+`VaultsByOwner(Address)` on the factory) need their TTL bumped
+periodically (`extend_ttl`) or they can be archived by the network. No
+extension policy is implemented yet; this must be handled operationally
+(e.g. a keeper bumping TTLs) or added to the contract before mainnet use.
 
-### 2. No per-depositor accounting
+### 2. `VaultsByOwner` is an unbounded vector
 
-`BALANCE` is a single pooled value. If multiple addresses deposit, the
-contract has no on-chain record of who contributed what — only the owner
-can withdraw, and only in aggregate. This is a design choice
-([ADR-001](adr/001-single-balance-vault.md)), not an oversight, but it
-means this contract is unsuitable for use cases requiring per-depositor
-withdrawal rights without an additional access layer.
+An owner who deploys a very large number of vaults through the factory
+grows their `VaultsByOwner` entry without bound, increasing the cost of
+reading/writing it. There is no pagination on `vaults_by_owner`. Fine for
+the expected use case (a handful of vaults per owner); would need
+revisiting for a use case with unbounded per-owner vault counts.
 
-### 3. No overflow check on deposit accumulation
+### 3. No per-depositor accounting
 
-`balance + amount` in `deposit` is not wrapped in a `checked_add`. At
-`i128` range this is not practically reachable with real token supplies,
-but it should be made explicit before a mainnet audit.
+Each vault's `Balance` is a single pooled value; the contract has no
+on-chain record of who contributed what — only the owner can withdraw,
+and only in aggregate. This is an intentional design choice
+([ADR-001](adr/001-single-balance-vault.md)), not an oversight.
 
-### 4. No pause / emergency-stop mechanism
+### 4. No emergency stop beyond `pause`
 
-There is no way to freeze deposits or withdrawals if a vulnerability is
-discovered post-deployment short of the owner withdrawing the full
-balance.
+`pause` blocks new deposits but does not block `withdraw` — by design,
+the owner should always be able to retrieve funds, including while
+paused. There is no contract-level mechanism to freeze withdrawals if the
+*owner's* key is what's compromised; the owner is the trust root.
+
+### 5. Salt management is the caller's responsibility
+
+`LumenVaultFactory::deploy_vault` does not generate or track salts for
+callers — a naive integration that always passes the same salt for the
+same owner will only succeed once. See
+[ADR-004](adr/004-permissionless-factory.md).
+
+## Resolved
+
+- ~~Front-runnable `initialize`~~ — replaced with constructor-based
+  initialization; see [ADR-002](adr/002-constructor-based-initialization.md).
+- ~~Unchecked overflow on deposit accumulation~~ — `deposit` now uses
+  `checked_add` and returns `Error::Overflow`.
+- ~~No pause/emergency-stop mechanism~~ — `pause`/`unpause` added,
+  gating new deposits.
 
 ## Disclosure
 
@@ -78,8 +107,13 @@ rather than a public issue.
 
 ## Audit Checklist (pre-mainnet)
 
-- [ ] Access control on `initialize`
-- [ ] Explicit checked arithmetic on `deposit`
-- [ ] Decide on and document per-depositor accounting requirements
-- [ ] Third-party audit of `contracts/lumen_vault`
-- [ ] Testnet soak period with monitored deposits/withdrawals
+- [ ] TTL/rent extension policy for `LumenVaultFactory`'s persistent
+      storage
+- [ ] Decide on and document per-depositor accounting requirements (if
+      any consumer needs them)
+- [ ] Third-party audit of `contracts/lumen_vault` and
+      `contracts/lumen_vault_factory`
+- [ ] Testnet soak period with monitored deposits/withdrawals and at
+      least one full ownership-transfer cycle
+- [ ] Confirm salt-management story in the SDK before advertising the
+      factory as the primary integration path

@@ -35,3 +35,9 @@ the vault's `owner`.
 - **Per-depositor map**: rejected for v0.1 to keep the initial contract
   surface minimal and easier to audit; revisit once a concrete multi-party
   use case is defined.
+
+## See Also
+
+- [ADR-004](004-permissionless-factory.md): rather than making a single
+  vault multi-party, `LumenVaultFactory` lets each party deploy their own
+  single-owner vault instead.
