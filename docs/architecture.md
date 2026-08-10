@@ -49,7 +49,7 @@ fn accept_owner(env: Env) -> Result<(), Error>
 fn balance(env: Env) -> i128
 fn owner(env: Env) -> Result<Address, Error>
 fn pending_owner(env: Env) -> Option<Address>
-fn token(env: Env) -> Address
+fn token(env: Env) -> Result<Address, Error>
 fn min_deposit(env: Env) -> i128
 fn max_balance(env: Env) -> Option<i128>
 fn paused(env: Env) -> bool
@@ -144,6 +144,12 @@ shared `validate_deposit_bounds` check that rejects negative values with
 `max_balance < min_deposit`, which an owner can use as a stronger
 "no new deposits will ever fit" gate than `pause` (e.g.
 `max_balance = Some(0)`).
+
+Every read of internal storage that can plausibly be missing (`Owner`,
+`Token`) goes through a `Result<_, Error::NotInitialized>` accessor —
+`token()` was the one holdout still using `.expect("not initialized")`
+(a raw panic with no error code) until this was made consistent with
+`owner()`.
 
 ## Recovering Stray Assets
 

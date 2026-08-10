@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.3.2 - 2026-08-10
+
+### Changed
+
+- **Breaking**: `token()` now returns `Result<Address, Error>` instead
+  of panicking with a raw `.expect("not initialized")` message —
+  consistent with `owner()`. Internally, `read_token` now returns
+  `Result<Address, Error>` and every caller (`deposit`, `withdraw`,
+  `rescue`, `token`) propagates it with `?` instead of panicking.
+- Audited both contracts for unbounded/non-terminating loops: neither
+  contains a manual loop over an unbounded collection (`vaults_by_owner`
+  uses `Vec::slice`, not a loop). No change needed on the contract side;
+  see the SDK entry below for where an actual (correctly bounded) loop
+  was added.
+
 ## lumen_vault 0.3.1 / lumen_vault_factory 0.3.0 - 2026-08-10
 
 ### Added
