@@ -32,7 +32,7 @@ fn deploy_vault_and_track_ownership() {
 
     assert_eq!(factory.vault_count(), 1);
     assert_eq!(
-        factory.vaults_by_owner(&owner),
+        factory.vaults_by_owner(&owner, &0, &10),
         vec![&env, vault_address.clone()]
     );
 
@@ -68,8 +68,36 @@ fn multiple_owners_get_independent_vaults() {
     );
 
     assert_eq!(factory.vault_count(), 2);
-    assert_eq!(factory.vaults_by_owner(&owner_a).len(), 1);
-    assert_eq!(factory.vaults_by_owner(&owner_b).len(), 1);
+    assert_eq!(factory.vaults_by_owner(&owner_a, &0, &10).len(), 1);
+    assert_eq!(factory.vaults_by_owner(&owner_b, &0, &10).len(), 1);
+}
+
+#[test]
+fn vaults_by_owner_paginates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = deploy_factory(&env);
+    let token = test_token(&env);
+    let owner = Address::generate(&env);
+
+    for i in 0..5u8 {
+        let mut salt_bytes = [0u8; 32];
+        salt_bytes[0] = i;
+        factory.deploy_vault(
+            &owner,
+            &token,
+            &0,
+            &None,
+            &BytesN::from_array(&env, &salt_bytes),
+        );
+    }
+
+    assert_eq!(factory.vaults_by_owner(&owner, &0, &2).len(), 2);
+    assert_eq!(factory.vaults_by_owner(&owner, &2, &2).len(), 2);
+    assert_eq!(factory.vaults_by_owner(&owner, &4, &2).len(), 1);
+    assert_eq!(factory.vaults_by_owner(&owner, &10, &2).len(), 0);
+    assert_eq!(factory.vaults_by_owner(&owner, &0, &100).len(), 5);
 }
 
 #[test]
@@ -107,4 +135,16 @@ fn extend_ttl_functions_do_not_panic() {
 
     factory.extend_ttl(&100, &1000);
     factory.extend_vaults_by_owner_ttl(&owner, &100, &1000);
+}
+
+#[test]
+fn extend_vaults_by_owner_ttl_without_vaults_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = deploy_factory(&env);
+    let owner = Address::generate(&env);
+
+    let result = factory.try_extend_vaults_by_owner_ttl(&owner, &100, &1000);
+    assert_eq!(result, Err(Ok(Error::NoVaultsForOwner)));
 }

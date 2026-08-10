@@ -2,14 +2,22 @@
 #[cfg(test)]
 extern crate std;
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contractmeta, contracttype, Address,
+    BytesN, Env, Vec,
 };
+
+contractmeta!(key = "Name", val = "lumen_vault_factory");
+contractmeta!(
+    key = "Description",
+    val = "Permissionless factory for deploying and indexing lumen_vault instances"
+);
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
     NotInitialized = 1,
+    NoVaultsForOwner = 2,
 }
 
 #[contracttype]
@@ -99,11 +107,19 @@ impl LumenVaultFactory {
             .unwrap_or(0)
     }
 
-    pub fn vaults_by_owner(env: Env, owner: Address) -> Vec<Address> {
-        env.storage()
+    /// Returns up to `limit` vault addresses for `owner`, starting at
+    /// `offset` (in deployment order). Callers with many vaults should
+    /// page through this rather than assuming a small, fixed result —
+    /// see the "unbounded vector" note in `docs/security.md`.
+    pub fn vaults_by_owner(env: Env, owner: Address, offset: u32, limit: u32) -> Vec<Address> {
+        let owned: Vec<Address> = env
+            .storage()
             .persistent()
             .get(&DataKey::VaultsByOwner(owner))
-            .unwrap_or(Vec::new(&env))
+            .unwrap_or(Vec::new(&env));
+        let start = offset.min(owned.len());
+        let end = start.saturating_add(limit).min(owned.len());
+        owned.slice(start..end)
     }
 
     pub fn vault_wasm_hash(env: Env) -> Result<BytesN<32>, Error> {
@@ -122,10 +138,20 @@ impl LumenVaultFactory {
     /// `extend_ttl` because persistent, per-key entries are archived
     /// independently of instance storage — an owner who never deploys
     /// again still wants their existing vault list to stay readable.
-    pub fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_to: u32) {
+    pub fn extend_vaults_by_owner_ttl(
+        env: Env,
+        owner: Address,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), Error> {
+        let key = DataKey::VaultsByOwner(owner);
+        if !env.storage().persistent().has(&key) {
+            return Err(Error::NoVaultsForOwner);
+        }
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::VaultsByOwner(owner), threshold, extend_to);
+            .extend_ttl(&key, threshold, extend_to);
+        Ok(())
     }
 }
 
