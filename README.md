@@ -4,12 +4,16 @@ Soroban smart contracts for the LumenForge project on Stellar.
 
 ## Contracts
 
-- **`lumen_vault`** — an owner-gated deposit/withdraw vault. Deposits are
-  open to any authorized address; only the vault's owner can withdraw.
-  Supports pausing, and a two-step ownership transfer
-  (`propose_owner` / `accept_owner`) so ownership can't be lost to a typo.
-  Ownership is set atomically at deployment via a constructor, so there is
-  no window for a third party to front-run initialization.
+- **`lumen_vault`** — an owner-gated deposit/withdraw vault that custodies
+  a real [SEP-41](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md)
+  token (fixed per instance). Deposits are open to any authorized
+  address; only the vault's owner can withdraw. Supports pausing,
+  owner-adjustable deposit minimums/caps, recovery of a wrong-asset
+  token accidentally sent to the vault (`rescue`), and a two-step
+  ownership transfer (`propose_owner` / `accept_owner`) so ownership
+  can't be lost to a typo. Ownership and the custodied token are set
+  atomically at deployment via a constructor, so there is no window for
+  a third party to front-run initialization.
 - **`lumen_vault_factory`** — a permissionless factory that deploys
   `lumen_vault` instances on demand and keeps an on-chain index of which
   vaults belong to which owner (`deploy_vault`, `vaults_by_owner`,
@@ -65,9 +69,15 @@ soroban contract deploy \
   --network testnet \
   -- --vault_wasm_hash <hash-from-step-1>
 
-# 3. Anyone can now self-serve a vault
+# 3. Anyone can now self-serve a vault for the token of their choice.
+#    max_balance is Option<i128> — check `soroban contract invoke ... -- deploy_vault --help`
+#    for how your soroban-cli version expects an absent Option value on the CLI.
 soroban contract invoke --id <factory-id> --source <your-identity> --network testnet \
-  -- deploy_vault --owner <your-address> --salt <32-byte-hex-salt>
+  -- deploy_vault \
+     --owner <your-address> \
+     --token <sep-41-token-contract-id> \
+     --min_deposit 0 \
+     --salt <32-byte-hex-salt>
 ```
 
 A vault can also be deployed directly without the factory:
@@ -77,7 +87,9 @@ soroban contract deploy \
   --wasm target/wasm32v1-none/release/lumen_vault.wasm \
   --source <your-identity> \
   --network testnet \
-  -- --owner <owner-address>
+  -- --owner <owner-address> \
+     --token <sep-41-token-contract-id> \
+     --min_deposit 0
 ```
 
 ## Related

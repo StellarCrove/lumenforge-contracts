@@ -4,8 +4,9 @@
 
 ### Assets at risk
 
-- Tokens/native balance represented by each vault's `Balance` ledger
-  value.
+- The real SEP-41 token balance each vault holds (transferred in via
+  `deposit`, out via `withdraw`/`rescue`) — this is actual custodied
+  value, not just an internal counter.
 - Availability of `withdraw` for the legitimate owner.
 - Correctness of the factory's `VaultsByOwner` index (an integrity, not a
   funds, risk — the index is informational, not authoritative; a vault's
@@ -17,15 +18,23 @@
   entire balance. There is no recovery mechanism if that key is lost or
   compromised, beyond a successful `propose_owner`/`accept_owner` run
   *before* the key is lost.
+- The `token` address set at deployment is trusted to behave like a
+  conforming [SEP-41](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md)
+  token. See "Non-standard tokens" below — a malicious or broken token
+  contract can break this vault's accounting.
 
 ## Authentication
 
 - `deposit` requires `from.require_auth()` — a caller can only deposit on
-  behalf of an address that has authorized the invocation.
-- `withdraw`, `pause`, `unpause`, and `propose_owner` all require
-  `owner.require_auth()`, where `owner` is read from storage rather than
-  taken as a caller-supplied argument — a caller cannot claim ownership by
-  simply passing their own address.
+  behalf of an address that has authorized the invocation. The
+  underlying token transfer additionally requires its own `from`
+  authorization internally; both must be present in the signed
+  transaction's auth tree.
+- `withdraw`, `pause`, `unpause`, `propose_owner`, `set_min_deposit`,
+  `set_max_balance`, and `rescue` all require `owner.require_auth()`,
+  where `owner` is read from storage rather than taken as a
+  caller-supplied argument — a caller cannot claim ownership by simply
+  passing their own address.
 - `accept_owner` requires `pending_owner.require_auth()`, proving control
   of the proposed address before ownership actually moves.
 - `LumenVaultFactory::deploy_vault` requires `owner.require_auth()`: a
@@ -40,9 +49,12 @@
 
 Soroban's execution model does not permit the classic EVM-style
 reentrancy pattern (no fallback-triggered external calls mid-execution),
-so this is not treated as a primary risk. State is updated before events
-are published in every state-changing function, consistent with
-checks-effects-interactions as a defensive default.
+so this is not treated as a primary risk. `deposit`/`withdraw` update
+`Balance` and then invoke the token's `transfer` — since a Soroban
+transaction is all-or-nothing (a panic anywhere in the call tree reverts
+every storage write in it), there is no partial-application window
+regardless of ordering, but state is still kept in its natural
+checks-effects-interactions order for clarity.
 
 ## Arithmetic
 
@@ -54,6 +66,22 @@ checks-effects-interactions as a defensive default.
 - `deposit`'s balance increment uses `checked_add`, returning
   `Error::Overflow` instead of panicking or wrapping if it would exceed
   `i128::MAX`.
+
+## Non-Standard Tokens
+
+`LumenVault` assumes `token` is a well-behaved SEP-41 implementation
+where `transfer(from, to, amount)` moves exactly `amount` and either
+succeeds or aborts the transaction — nothing else. Two classes of token
+would desynchronize the vault's `Balance` from its actual holdings:
+
+- **Fee-on-transfer tokens**: if the token deducts a fee so the vault
+  receives less than `amount`, `Balance` would over-state real holdings.
+- **Rebasing tokens**: if the token's own accounting changes balances
+  outside of `transfer` calls, `Balance` (which only moves on
+  deposit/withdraw) would drift from the vault's actual token balance.
+
+Neither is checked for on deployment — vetting `token` before deploying
+a vault for it is an integrator responsibility.
 
 ## Known Limitations
 
@@ -97,6 +125,15 @@ callers — a naive integration that always passes the same salt for the
 same owner will only succeed once. See
 [ADR-004](adr/004-permissionless-factory.md).
 
+### 6. `rescue` trusts the owner not to grief depositors indirectly
+
+`rescue` cannot move the vault's own configured `token`, but it *can*
+move any other token the vault happens to hold — including, in principle,
+LP or receipt tokens some future integration might expect to stay put.
+Not a fund-loss risk for the vault's own depositors, but integrators
+building on top of a vault (rather than depositing into it directly)
+should be aware the owner has this reach.
+
 ## Resolved
 
 - ~~Front-runnable `initialize`~~ — replaced with constructor-based
@@ -105,6 +142,13 @@ same owner will only succeed once. See
   `checked_add` and returns `Error::Overflow`.
 - ~~No pause/emergency-stop mechanism~~ — `pause`/`unpause` added,
   gating new deposits.
+- ~~`Balance` didn't correspond to any real asset~~ — `deposit`/`withdraw`
+  now transfer a real SEP-41 `token` in and out; see
+  [ADR-005](adr/005-single-token-per-vault.md).
+- ~~No way to recover a wrong-asset transfer sent directly to a vault~~
+  — `rescue` added, explicitly barred from moving the vault's own token.
+- ~~No deposit-size controls~~ — `min_deposit`/`max_balance`, both
+  owner-adjustable via `set_min_deposit`/`set_max_balance`.
 
 ## Disclosure
 
@@ -124,3 +168,6 @@ rather than a public issue.
       least one full ownership-transfer cycle
 - [ ] Confirm salt-management story in the SDK before advertising the
       factory as the primary integration path
+- [ ] Document a token vetting checklist (fee-on-transfer / rebasing /
+      pausable-by-issuer) before recommending a `token` address to
+      integrators

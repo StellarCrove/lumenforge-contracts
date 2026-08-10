@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026-08-10
+
+### Added
+
+- **Real SEP-41 token custody.** `lumen_vault` now takes a `token`
+  address at construction and `deposit`/`withdraw` transfer actual token
+  balances via `token::TokenClient`, instead of only moving an internal
+  `Balance` counter. See [ADR-005](docs/adr/005-single-token-per-vault.md).
+- `min_deposit`/`max_balance` on `lumen_vault`, both owner-adjustable via
+  `set_min_deposit`/`set_max_balance`.
+- `rescue(token, to, amount)` on `lumen_vault` to recover a *different*
+  token accidentally sent to the vault directly; explicitly barred from
+  moving the vault's own configured token.
+- `MinDepositUpdated`, `MaxBalanceUpdated`, `Rescued` events.
+- Tests that assert on real `TokenClient::balance` (not just the vault's
+  own accounting) to verify deposits/withdrawals actually move tokens.
+
+### Changed
+
+- `LumenVault::__constructor` and `LumenVaultFactory::deploy_vault` both
+  gained `token`, `min_deposit`, `max_balance` parameters — a **breaking
+  change** to both contracts' deployment interfaces.
+- `docs/architecture.md` and `docs/security.md` updated for real token
+  custody, deposit caps, and the `rescue` threat surface (non-standard
+  token behavior, fee-on-transfer/rebasing risk).
+
 ## [0.2.0] - 2026-08-10
 
 ### Added
