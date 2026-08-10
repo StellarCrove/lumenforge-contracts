@@ -153,7 +153,7 @@ impl LumenVault {
             .instance()
             .set(&DataKey::Balance, &new_balance);
 
-        let token_client = token::TokenClient::new(&env, &Self::read_token(&env));
+        let token_client = token::TokenClient::new(&env, &Self::read_token(&env)?);
         token_client.transfer(
             &from,
             MuxedAddress::from(env.current_contract_address()),
@@ -180,7 +180,7 @@ impl LumenVault {
             .instance()
             .set(&DataKey::Balance, &new_balance);
 
-        let token_client = token::TokenClient::new(&env, &Self::read_token(&env));
+        let token_client = token::TokenClient::new(&env, &Self::read_token(&env)?);
         token_client.transfer(
             &env.current_contract_address(),
             MuxedAddress::from(owner.clone()),
@@ -241,7 +241,7 @@ impl LumenVault {
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
-        if token == Self::read_token(&env) {
+        if token == Self::read_token(&env)? {
             return Err(Error::CannotRescueVaultToken);
         }
         let token_client = token::TokenClient::new(&env, &token);
@@ -295,7 +295,7 @@ impl LumenVault {
         env.storage().instance().get(&DataKey::PendingOwner)
     }
 
-    pub fn token(env: Env) -> Address {
+    pub fn token(env: Env) -> Result<Address, Error> {
         Self::read_token(&env)
     }
 
@@ -331,11 +331,11 @@ impl LumenVault {
             .ok_or(Error::NotInitialized)
     }
 
-    fn read_token(env: &Env) -> Address {
+    fn read_token(env: &Env) -> Result<Address, Error> {
         env.storage()
             .instance()
             .get(&DataKey::Token)
-            .expect("not initialized")
+            .ok_or(Error::NotInitialized)
     }
 
     fn read_min_deposit(env: &Env) -> i128 {
