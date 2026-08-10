@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["contracts/lumen_vault"]
+members = ["contracts/lumen_vault", "contracts/lumen_vault_factory"]
+
+[workspace.dependencies]
+soroban-sdk = "27.0.5"
 
 [profile.release]
 opt-level = "z"
