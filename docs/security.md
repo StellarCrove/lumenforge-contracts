@@ -31,6 +31,10 @@
 - `LumenVaultFactory::deploy_vault` requires `owner.require_auth()`: a
   caller can only deploy a vault *for themselves*, not on behalf of an
   arbitrary address.
+- `extend_ttl` (both contracts) and `extend_vaults_by_owner_ttl`
+  (factory) require no authorization at all, intentionally: extending a
+  TTL only costs the caller fees and benefits whoever's storage it is,
+  so there is nothing to gate.
 
 ## Reentrancy
 
@@ -53,13 +57,16 @@ checks-effects-interactions as a defensive default.
 
 ## Known Limitations
 
-### 1. No TTL/rent management
+### 1. No TTL/rent *policy* (mechanism exists)
 
-Instance and persistent storage entries (in particular
-`VaultsByOwner(Address)` on the factory) need their TTL bumped
-periodically (`extend_ttl`) or they can be archived by the network. No
-extension policy is implemented yet; this must be handled operationally
-(e.g. a keeper bumping TTLs) or added to the contract before mainnet use.
+Both contracts expose `extend_ttl` (and the factory additionally exposes
+`extend_vaults_by_owner_ttl` for its per-owner persistent entries), so
+instance/persistent storage TTLs *can* be bumped by anyone before they
+expire and the network archives that storage. What's still missing is a
+policy for *who actually calls these on a schedule* — there's no
+self-triggering keeper on-chain (Soroban contracts can't wake themselves
+up). This needs an off-chain cron/keeper before mainnet use, or
+integrators must be told to call it themselves periodically.
 
 ### 2. `VaultsByOwner` is an unbounded vector
 

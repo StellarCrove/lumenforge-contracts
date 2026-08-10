@@ -12,6 +12,8 @@ All notable changes to this project are documented in this file.
 - `pause`/`unpause` on `lumen_vault`, blocking new deposits.
 - Two-step ownership transfer (`propose_owner`/`accept_owner`) on
   `lumen_vault`.
+- `extend_ttl` on both contracts, plus `extend_vaults_by_owner_ttl` on
+  the factory, so storage TTLs can be bumped before network archival.
 - Typed contract events (`#[contractevent]`) for deposit, withdraw,
   pause/resume, and ownership-transfer flows.
 - ADR-002 (constructor-based initialization), ADR-003 (two-step

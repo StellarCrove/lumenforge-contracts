@@ -174,6 +174,15 @@ impl LumenVault {
         Self::is_paused(&env)
     }
 
+    /// Bumps this vault's instance storage TTL. Callable by anyone (they
+    /// pay the fee) since keeping the vault alive benefits its owner, not
+    /// the caller — there's nothing to gate. Without periodic calls to
+    /// this, the network can archive the contract's storage once its TTL
+    /// expires.
+    pub fn extend_ttl(env: Env, threshold: u32, extend_to: u32) {
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
     fn read_balance(env: &Env) -> i128 {
         env.storage().instance().get(&DataKey::Balance).unwrap_or(0)
     }

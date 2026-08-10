@@ -67,3 +67,16 @@ fn reusing_a_salt_for_the_same_owner_fails() {
     }));
     assert!(result.is_err());
 }
+
+#[test]
+fn extend_ttl_functions_do_not_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = deploy_factory(&env);
+    let owner = Address::generate(&env);
+    factory.deploy_vault(&owner, &BytesN::from_array(&env, &[9u8; 32]));
+
+    factory.extend_ttl(&100, &1000);
+    factory.extend_vaults_by_owner_ttl(&owner, &100, &1000);
+}

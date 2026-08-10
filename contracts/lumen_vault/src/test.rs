@@ -115,3 +115,14 @@ fn deposit_emits_event() {
     let events = env.events().all();
     assert_eq!(events.events().len(), 1);
 }
+
+#[test]
+fn extend_ttl_does_not_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner);
+
+    client.extend_ttl(&100, &1000);
+}

@@ -104,6 +104,21 @@ impl LumenVaultFactory {
             .get(&DataKey::VaultWasmHash)
             .ok_or(Error::NotInitialized)
     }
+
+    /// Bumps the factory's own instance storage TTL. Callable by anyone.
+    pub fn extend_ttl(env: Env, threshold: u32, extend_to: u32) {
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
+    /// Bumps a specific owner's `VaultsByOwner` entry TTL. Separate from
+    /// `extend_ttl` because persistent, per-key entries are archived
+    /// independently of instance storage — an owner who never deploys
+    /// again still wants their existing vault list to stay readable.
+    pub fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_to: u32) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::VaultsByOwner(owner), threshold, extend_to);
+    }
 }
 
 mod test;

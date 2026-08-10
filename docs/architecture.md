@@ -40,6 +40,7 @@ fn balance(env: Env) -> i128
 fn owner(env: Env) -> Result<Address, Error>
 fn pending_owner(env: Env) -> Option<Address>
 fn paused(env: Env) -> bool
+fn extend_ttl(env: Env, threshold: u32, extend_to: u32)
 ```
 
 **Events:** `Deposit`, `Withdraw`, `Paused`, `Resumed`, `OwnerProposed`,
@@ -64,6 +65,8 @@ fn deploy_vault(env: Env, owner: Address, salt: BytesN<32>) -> Result<Address, E
 fn vault_count(env: Env) -> u32
 fn vaults_by_owner(env: Env, owner: Address) -> Vec<Address>
 fn vault_wasm_hash(env: Env) -> Result<BytesN<32>, Error>
+fn extend_ttl(env: Env, threshold: u32, extend_to: u32)
+fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_to: u32)
 ```
 
 `deploy_vault` requires `owner.require_auth()` — only the address that
