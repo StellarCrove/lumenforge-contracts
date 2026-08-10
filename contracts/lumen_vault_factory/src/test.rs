@@ -13,16 +13,22 @@ fn deploy_factory(env: &Env) -> LumenVaultFactoryClient<'static> {
     LumenVaultFactoryClient::new(env, &factory_id)
 }
 
+fn test_token(env: &Env) -> Address {
+    let admin = Address::generate(env);
+    env.register_stellar_asset_contract_v2(admin).address()
+}
+
 #[test]
 fn deploy_vault_and_track_ownership() {
     let env = Env::default();
     env.mock_all_auths();
 
     let factory = deploy_factory(&env);
+    let token = test_token(&env);
     let owner = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0u8; 32]);
 
-    let vault_address = factory.deploy_vault(&owner, &salt);
+    let vault_address = factory.deploy_vault(&owner, &token, &0, &None, &salt);
 
     assert_eq!(factory.vault_count(), 1);
     assert_eq!(
@@ -32,6 +38,7 @@ fn deploy_vault_and_track_ownership() {
 
     let vault_client = vault_wasm::Client::new(&env, &vault_address);
     assert_eq!(vault_client.owner(), owner);
+    assert_eq!(vault_client.token(), token);
     assert_eq!(vault_client.balance(), 0);
 }
 
@@ -41,11 +48,24 @@ fn multiple_owners_get_independent_vaults() {
     env.mock_all_auths();
 
     let factory = deploy_factory(&env);
+    let token = test_token(&env);
     let owner_a = Address::generate(&env);
     let owner_b = Address::generate(&env);
 
-    factory.deploy_vault(&owner_a, &BytesN::from_array(&env, &[1u8; 32]));
-    factory.deploy_vault(&owner_b, &BytesN::from_array(&env, &[2u8; 32]));
+    factory.deploy_vault(
+        &owner_a,
+        &token,
+        &0,
+        &None,
+        &BytesN::from_array(&env, &[1u8; 32]),
+    );
+    factory.deploy_vault(
+        &owner_b,
+        &token,
+        &0,
+        &None,
+        &BytesN::from_array(&env, &[2u8; 32]),
+    );
 
     assert_eq!(factory.vault_count(), 2);
     assert_eq!(factory.vaults_by_owner(&owner_a).len(), 1);
@@ -58,12 +78,13 @@ fn reusing_a_salt_for_the_same_owner_fails() {
     env.mock_all_auths();
 
     let factory = deploy_factory(&env);
+    let token = test_token(&env);
     let owner = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[7u8; 32]);
 
-    factory.deploy_vault(&owner, &salt);
+    factory.deploy_vault(&owner, &token, &0, &None, &salt);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        factory.deploy_vault(&owner, &salt);
+        factory.deploy_vault(&owner, &token, &0, &None, &salt);
     }));
     assert!(result.is_err());
 }
@@ -74,8 +95,15 @@ fn extend_ttl_functions_do_not_panic() {
     env.mock_all_auths();
 
     let factory = deploy_factory(&env);
+    let token = test_token(&env);
     let owner = Address::generate(&env);
-    factory.deploy_vault(&owner, &BytesN::from_array(&env, &[9u8; 32]));
+    factory.deploy_vault(
+        &owner,
+        &token,
+        &0,
+        &None,
+        &BytesN::from_array(&env, &[9u8; 32]),
+    );
 
     factory.extend_ttl(&100, &1000);
     factory.extend_vaults_by_owner_ttl(&owner, &100, &1000);

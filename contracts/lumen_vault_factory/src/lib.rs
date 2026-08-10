@@ -39,12 +39,20 @@ impl LumenVaultFactory {
         env.storage().instance().set(&DataKey::VaultCount, &0u32);
     }
 
-    /// Deploys a new `LumenVault` owned by `owner`. `salt` must be unique
-    /// per deployment (e.g. a per-owner nonce) since Soroban derives the
-    /// deployed contract's address deterministically from the deployer,
-    /// salt, and Wasm hash — reusing a salt for the same owner would try
-    /// to redeploy to an address that already exists and fail.
-    pub fn deploy_vault(env: Env, owner: Address, salt: BytesN<32>) -> Result<Address, Error> {
+    /// Deploys a new `LumenVault` owned by `owner`, custodying `token`.
+    /// `salt` must be unique per deployment (e.g. a per-owner nonce)
+    /// since Soroban derives the deployed contract's address
+    /// deterministically from the deployer, salt, and Wasm hash —
+    /// reusing a salt for the same owner would try to redeploy to an
+    /// address that already exists and fail.
+    pub fn deploy_vault(
+        env: Env,
+        owner: Address,
+        token: Address,
+        min_deposit: i128,
+        max_balance: Option<i128>,
+        salt: BytesN<32>,
+    ) -> Result<Address, Error> {
         owner.require_auth();
 
         let wasm_hash: BytesN<32> = env
@@ -56,7 +64,7 @@ impl LumenVaultFactory {
         let deployed = env
             .deployer()
             .with_current_contract(salt)
-            .deploy_v2(wasm_hash, (owner.clone(),));
+            .deploy_v2(wasm_hash, (owner.clone(), token, min_deposit, max_balance));
 
         let count: u32 = env
             .storage()
