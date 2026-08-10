@@ -3,6 +3,9 @@ name = "lumen-vault"
 version = "0.2.0"
 edition = "2021"
 publish = false
+license = "MIT"
+repository = "https://github.com/StellarCrove/lumenforge-contracts"
+description = "Owner-gated deposit/withdraw vault Soroban contract"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -3,6 +3,9 @@ name = "lumen-vault-factory"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "MIT"
+repository = "https://github.com/StellarCrove/lumenforge-contracts"
+description = "Permissionless factory for deploying and indexing lumen_vault instances"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
