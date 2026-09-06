@@ -175,7 +175,11 @@ impl LumenVault {
         if amount > balance {
             return Err(Error::InsufficientBalance);
         }
-        let new_balance = balance - amount;
+        // `amount <= balance` is already guaranteed above, so this cannot
+        // underflow; `checked_sub` keeps the arithmetic guarantee explicit
+        // in the code rather than resting only on the guard, and mirrors
+        // `deposit`'s `checked_add`.
+        let new_balance = balance.checked_sub(amount).ok_or(Error::Overflow)?;
         env.storage()
             .instance()
             .set(&DataKey::Balance, &new_balance);

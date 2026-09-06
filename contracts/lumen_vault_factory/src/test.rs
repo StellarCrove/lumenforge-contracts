@@ -101,6 +101,42 @@ fn vaults_by_owner_paginates() {
 }
 
 #[test]
+fn vaults_by_owner_count_tracks_deployments() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = deploy_factory(&env);
+    let token = test_token(&env);
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    // Never-deployed owner: 0, no error.
+    assert_eq!(factory.vaults_by_owner_count(&owner), 0);
+    assert_eq!(factory.vaults_by_owner_count(&stranger), 0);
+
+    for i in 0..3u8 {
+        let mut salt_bytes = [0u8; 32];
+        salt_bytes[0] = i;
+        factory.deploy_vault(
+            &owner,
+            &token,
+            &0,
+            &None,
+            &BytesN::from_array(&env, &salt_bytes),
+        );
+        assert_eq!(factory.vaults_by_owner_count(&owner), u32::from(i) + 1);
+    }
+
+    // Per-owner, not global.
+    assert_eq!(factory.vaults_by_owner_count(&owner), 3);
+    assert_eq!(factory.vaults_by_owner_count(&stranger), 0);
+    assert_eq!(
+        factory.vaults_by_owner_count(&owner),
+        factory.vaults_by_owner(&owner, &0, &100).len()
+    );
+}
+
+#[test]
 fn reusing_a_salt_for_the_same_owner_fails() {
     let env = Env::default();
     env.mock_all_auths();

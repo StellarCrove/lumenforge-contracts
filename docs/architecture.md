@@ -78,6 +78,7 @@ fn __constructor(env: Env, vault_wasm_hash: BytesN<32>)
 fn deploy_vault(env: Env, owner: Address, token: Address, min_deposit: i128, max_balance: Option<i128>, salt: BytesN<32>) -> Result<Address, Error>
 fn vault_count(env: Env) -> u32
 fn vaults_by_owner(env: Env, owner: Address, offset: u32, limit: u32) -> Vec<Address>
+fn vaults_by_owner_count(env: Env, owner: Address) -> u32
 fn vault_wasm_hash(env: Env) -> Result<BytesN<32>, Error>
 fn extend_ttl(env: Env, threshold: u32, extend_to: u32)
 fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_to: u32) -> Result<(), Error>
@@ -85,7 +86,9 @@ fn extend_vaults_by_owner_ttl(env: Env, owner: Address, threshold: u32, extend_t
 
 `vaults_by_owner` is paginated (`offset`/`limit`) rather than returning
 the full list — see the "unbounded vector" note in
-[`docs/security.md`](security.md#known-limitations). `extend_vaults_by_owner_ttl`
+[`docs/security.md`](security.md#known-limitations). `vaults_by_owner_count`
+returns that owner's total so a caller can page against a known number
+instead of only stopping on a short page. `extend_vaults_by_owner_ttl`
 returns `Error::NoVaultsForOwner` if the given owner has never deployed a
 vault through this factory, instead of failing at the host level.
 

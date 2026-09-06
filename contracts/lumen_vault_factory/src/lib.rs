@@ -18,6 +18,7 @@ contractmeta!(
 pub enum Error {
     NotInitialized = 1,
     NoVaultsForOwner = 2,
+    CountOverflow = 3,
 }
 
 #[contracttype]
@@ -79,9 +80,10 @@ impl LumenVaultFactory {
             .instance()
             .get(&DataKey::VaultCount)
             .unwrap_or(0);
+        let next_count = count.checked_add(1).ok_or(Error::CountOverflow)?;
         env.storage()
             .instance()
-            .set(&DataKey::VaultCount, &(count + 1));
+            .set(&DataKey::VaultCount, &next_count);
 
         let key = DataKey::VaultsByOwner(owner.clone());
         let mut owned: Vec<Address> = env
@@ -104,6 +106,23 @@ impl LumenVaultFactory {
         env.storage()
             .instance()
             .get(&DataKey::VaultCount)
+            .unwrap_or(0)
+    }
+
+    /// Number of vaults `owner` has deployed through this factory. Returns
+    /// `0` for an owner that has never deployed one (never errors, unlike
+    /// `extend_vaults_by_owner_ttl`).
+    ///
+    /// Lets a paginating caller learn the total up front instead of
+    /// inferring "no more results" from a short page — `vaults_by_owner`
+    /// gives no other end-of-list signal. Reading it costs the same as
+    /// fetching one page (the whole `VaultsByOwner` entry is loaded either
+    /// way); see Known Limitation #2 in `docs/security.md`.
+    pub fn vaults_by_owner_count(env: Env, owner: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, Vec<Address>>(&DataKey::VaultsByOwner(owner))
+            .map(|owned| owned.len())
             .unwrap_or(0)
     }
 

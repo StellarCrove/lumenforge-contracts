@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.3.3 / lumen_vault_factory 0.3.1 - 2026-09-06
+
+### Added
+
+- `LumenVaultFactory::vaults_by_owner_count(owner) -> u32` — the number
+  of vaults an owner has deployed, `0` (not an error) for an owner who
+  never has. A paginating caller can now read the total up front instead
+  of inferring the end of the list from a short page; `vaults_by_owner`
+  gives no other end-of-list signal.
+
+### Changed
+
+- `LumenVaultFactory::deploy_vault` now increments its global vault
+  counter with `checked_add`, returning the new `Error::CountOverflow`
+  instead of silently wrapping past `u32::MAX`. (Unreachable at any
+  realistic scale; closes the last unchecked add in either contract.)
+- `LumenVault::withdraw` computes the post-withdrawal balance with
+  `checked_sub` (returning `Error::Overflow` on the — already
+  unreachable — underflow path) rather than a bare `-`, so the "prevents
+  underflow" guarantee in `docs/security.md` is enforced by the
+  arithmetic itself and matches `deposit`'s `checked_add`.
+
 ## lumen_vault 0.3.2 - 2026-08-10
 
 ### Changed

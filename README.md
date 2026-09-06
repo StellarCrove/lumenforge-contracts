@@ -17,7 +17,7 @@ Soroban smart contracts for the LumenForge project on Stellar.
 - **`lumen_vault_factory`** — a permissionless factory that deploys
   `lumen_vault` instances on demand and keeps an on-chain index of which
   vaults belong to which owner (`deploy_vault`, `vaults_by_owner`,
-  `vault_count`).
+  `vaults_by_owner_count`, `vault_count`).
 
 See [`docs/architecture.md`](docs/architecture.md) for how the two fit
 together and [`docs/security.md`](docs/security.md) for the threat model
