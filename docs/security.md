@@ -62,11 +62,15 @@ solely on transaction atomicity.
 - `i128` is used for the balance to avoid the overflow ranges of smaller
   integer types at realistic token amounts.
 - `deposit` and `withdraw` both reject non-positive amounts.
-- `withdraw` rejects amounts greater than the current balance, preventing
-  underflow.
+- `withdraw` rejects amounts greater than the current balance, then
+  computes the new balance with `checked_sub` (`Error::Overflow`). The
+  guard already rules out underflow; the checked op is defense in depth,
+  kept symmetric with `deposit`.
 - `deposit`'s balance increment uses `checked_add`, returning
   `Error::Overflow` instead of panicking or wrapping if it would exceed
   `i128::MAX`.
+- `LumenVaultFactory::deploy_vault` increments its `u32` vault counter
+  with `checked_add` (`Error::CountOverflow`) rather than a wrapping `+`.
 
 ## Non-Standard Tokens
 
@@ -162,8 +166,15 @@ should be aware the owner has this reach.
 - ~~Reading a large `VaultsByOwner` list was all-or-nothing~~ —
   `vaults_by_owner` now takes `offset`/`limit`. The underlying write
   path is still unbounded; see Known Limitation #2.
+- ~~Paginating `vaults_by_owner` had no total to page against~~ —
+  `vaults_by_owner_count(owner)` added, so a caller stops at a known
+  count instead of only on a short page.
 - ~~`extend_vaults_by_owner_ttl` panicked at the host level for an owner
   with no vaults~~ — now returns `Error::NoVaultsForOwner` instead.
+- ~~`deploy_vault`'s vault-counter increment could wrap past
+  `u32::MAX`~~ — now `checked_add` / `Error::CountOverflow`.
+- ~~`withdraw`'s balance decrement used a bare `-`~~ — now `checked_sub`,
+  matching `deposit`.
 
 ## Disclosure
 
