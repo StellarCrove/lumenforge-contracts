@@ -10,8 +10,9 @@ Soroban smart contracts for the LumenForge project on Stellar.
   address; only the vault's owner can withdraw. Supports pausing,
   owner-adjustable deposit minimums/caps, recovery of a wrong-asset
   token accidentally sent to the vault (`rescue`), and a two-step
-  ownership transfer (`propose_owner` / `accept_owner`) so ownership
-  can't be lost to a typo. Ownership and the custodied token are set
+  ownership transfer (`propose_owner` / `accept_owner`, with
+  `cancel_pending_owner` to withdraw a proposal) so ownership can't be
+  lost to a typo. Ownership and the custodied token are set
   atomically at deployment via a constructor, so there is no window for
   a third party to front-run initialization.
 - **`lumen_vault_factory`** — a permissionless factory that deploys

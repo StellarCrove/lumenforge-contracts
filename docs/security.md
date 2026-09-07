@@ -30,11 +30,11 @@
   underlying token transfer additionally requires its own `from`
   authorization internally; both must be present in the signed
   transaction's auth tree.
-- `withdraw`, `pause`, `unpause`, `propose_owner`, `set_min_deposit`,
-  `set_max_balance`, and `rescue` all require `owner.require_auth()`,
-  where `owner` is read from storage rather than taken as a
-  caller-supplied argument — a caller cannot claim ownership by simply
-  passing their own address.
+- `withdraw`, `pause`, `unpause`, `propose_owner`,
+  `cancel_pending_owner`, `set_min_deposit`, `set_max_balance`, and
+  `rescue` all require `owner.require_auth()`, where `owner` is read from
+  storage rather than taken as a caller-supplied argument — a caller
+  cannot claim ownership by simply passing their own address.
 - `accept_owner` requires `pending_owner.require_auth()`, proving control
   of the proposed address before ownership actually moves.
 - `LumenVaultFactory::deploy_vault` requires `owner.require_auth()`: a

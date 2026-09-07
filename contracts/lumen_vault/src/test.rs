@@ -217,6 +217,43 @@ fn accept_owner_without_proposal_fails() {
 }
 
 #[test]
+fn cancel_pending_owner_withdraws_the_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let successor = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+
+    client.propose_owner(&successor);
+    assert_eq!(client.pending_owner(), Some(successor.clone()));
+
+    client.cancel_pending_owner();
+    assert_eq!(client.pending_owner(), None);
+
+    // The formerly-proposed successor can no longer accept.
+    assert_eq!(client.try_accept_owner(), Err(Ok(Error::NoPendingOwner)));
+    // Ownership is unchanged.
+    assert_eq!(client.owner(), owner);
+}
+
+#[test]
+fn cancel_pending_owner_without_proposal_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+
+    assert_eq!(
+        client.try_cancel_pending_owner(),
+        Err(Ok(Error::NoPendingOwner))
+    );
+}
+
+#[test]
 fn deposit_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
@@ -230,6 +267,49 @@ fn deposit_emits_event() {
 
     let events = env.events().all();
     assert_eq!(events.events().len(), 2); // token's transfer event + our Deposit event
+}
+
+#[test]
+fn deposit_and_withdraw_events_carry_the_running_balance() {
+    use soroban_sdk::{xdr, Map, Symbol, TryFromVal, Val};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+    s.token_admin.mint(&owner, &1_000);
+
+    // The `#[contractevent]` macro serializes the non-topic fields as a
+    // `{ field_name: value }` map. `new_balance` is the post-op balance,
+    // so an indexer never has to replay every prior deposit/withdraw.
+    // Read it back from the vault's own last event (the token emits a
+    // Transfer event on the same call).
+    let last_vault_event_data = || -> Map<Symbol, i128> {
+        let events = env.events().all().filter_by_contract(&client.address);
+        let raw = events.events();
+        let last = raw.last().expect("vault emitted an event");
+        let xdr::ContractEventBody::V0(body) = &last.body;
+        let val = Val::try_from_val(&env, &body.data).unwrap();
+        Map::<Symbol, i128>::try_from_val(&env, &val).unwrap()
+    };
+
+    client.deposit(&owner, &300);
+    let d = last_vault_event_data();
+    assert_eq!(d.get_unchecked(Symbol::new(&env, "amount")), 300);
+    assert_eq!(d.get_unchecked(Symbol::new(&env, "new_balance")), 300);
+
+    client.deposit(&owner, &200);
+    assert_eq!(
+        last_vault_event_data().get_unchecked(Symbol::new(&env, "new_balance")),
+        500
+    );
+
+    client.withdraw(&150);
+    let w = last_vault_event_data();
+    assert_eq!(w.get_unchecked(Symbol::new(&env, "amount")), 150);
+    assert_eq!(w.get_unchecked(Symbol::new(&env, "new_balance")), 350);
 }
 
 #[test]

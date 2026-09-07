@@ -45,6 +45,9 @@ pub struct Deposit {
     #[topic]
     pub from: Address,
     pub amount: i128,
+    /// The vault's total `Balance` after this deposit. Lets an indexer
+    /// track balance history without replaying every prior event.
+    pub new_balance: i128,
 }
 
 #[contractevent]
@@ -52,6 +55,8 @@ pub struct Withdraw {
     #[topic]
     pub owner: Address,
     pub amount: i128,
+    /// The vault's total `Balance` after this withdrawal.
+    pub new_balance: i128,
 }
 
 #[contractevent]
@@ -70,6 +75,12 @@ pub struct Resumed {
 pub struct OwnerProposed {
     #[topic]
     pub new_owner: Address,
+}
+
+#[contractevent]
+pub struct OwnerProposalCancelled {
+    #[topic]
+    pub cancelled_owner: Address,
 }
 
 #[contractevent]
@@ -160,7 +171,12 @@ impl LumenVault {
             &amount,
         );
 
-        Deposit { from, amount }.publish(&env);
+        Deposit {
+            from,
+            amount,
+            new_balance,
+        }
+        .publish(&env);
         Ok(new_balance)
     }
 
@@ -191,7 +207,12 @@ impl LumenVault {
             &amount,
         );
 
-        Withdraw { owner, amount }.publish(&env);
+        Withdraw {
+            owner,
+            amount,
+            new_balance,
+        }
+        .publish(&env);
         Ok(new_balance)
     }
 
@@ -269,6 +290,27 @@ impl LumenVault {
             .instance()
             .set(&DataKey::PendingOwner, &new_owner);
         OwnerProposed { new_owner }.publish(&env);
+        Ok(())
+    }
+
+    /// Withdraws a pending proposal before the successor has accepted it —
+    /// e.g. the owner named the wrong address, or changed their mind about
+    /// a successor who hasn't called `accept_owner` yet. Only the current
+    /// owner can do this; errors with `NoPendingOwner` if there is nothing
+    /// to cancel.
+    pub fn cancel_pending_owner(env: Env) -> Result<(), Error> {
+        let owner = Self::read_owner(&env)?;
+        owner.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingOwner)
+            .ok_or(Error::NoPendingOwner)?;
+        env.storage().instance().remove(&DataKey::PendingOwner);
+        OwnerProposalCancelled {
+            cancelled_owner: pending,
+        }
+        .publish(&env);
         Ok(())
     }
 
