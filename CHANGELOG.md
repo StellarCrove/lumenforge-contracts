@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.4.0 - 2026-09-07
+
+### Added
+
+- `LumenVault::cancel_pending_owner()` — the current owner withdraws a
+  pending `propose_owner` before the successor has accepted it (wrong
+  address, or a change of mind). Owner-gated; `Error::NoPendingOwner` if
+  there is nothing to cancel. Emits `OwnerProposalCancelled`.
+- `Deposit` and `Withdraw` events now carry `new_balance` — the vault's
+  `Balance` after the op — so an indexer can track balance history
+  without replaying every prior event.
+
+### Changed
+
+- **Event schema**: consumers that decode `Deposit`/`Withdraw` by exact
+  field set will see the extra `new_balance` key. Additive; the existing
+  `from`/`owner` topic and `amount` field are unchanged.
+
 ## lumen_vault 0.3.3 / lumen_vault_factory 0.3.1 - 2026-09-06
 
 ### Added

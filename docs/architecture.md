@@ -26,7 +26,7 @@ LumenForge is a two-contract vault protocol on Soroban:
 | Key | Type | Description |
 |-----|------|-------------|
 | `DataKey::Owner` | `Address` | Set atomically at deployment. Only this address can withdraw, pause, or propose a new owner. |
-| `DataKey::PendingOwner` | `Address` | Set by `propose_owner`; cleared once `accept_owner` succeeds. |
+| `DataKey::PendingOwner` | `Address` | Set by `propose_owner`; cleared once `accept_owner` succeeds or the owner calls `cancel_pending_owner`. |
 | `DataKey::Token` | `Address` | Set atomically at deployment; the SEP-41 token this vault custodies. Immutable — a vault holds exactly one asset for its lifetime. |
 | `DataKey::Balance` | `i128` | Aggregate deposited balance, net of withdrawals. Always equal to the vault's actual token balance. |
 | `DataKey::Paused` | `bool` | When `true`, `deposit` is rejected. |
@@ -45,6 +45,7 @@ fn set_min_deposit(env: Env, min_deposit: i128) -> Result<(), Error>
 fn set_max_balance(env: Env, max_balance: Option<i128>) -> Result<(), Error>
 fn rescue(env: Env, token: Address, to: Address, amount: i128) -> Result<(), Error>
 fn propose_owner(env: Env, new_owner: Address) -> Result<(), Error>
+fn cancel_pending_owner(env: Env) -> Result<(), Error>
 fn accept_owner(env: Env) -> Result<(), Error>
 fn balance(env: Env) -> i128
 fn owner(env: Env) -> Result<Address, Error>
@@ -56,10 +57,12 @@ fn paused(env: Env) -> bool
 fn extend_ttl(env: Env, threshold: u32, extend_to: u32)
 ```
 
-**Events:** `Deposit`, `Withdraw`, `Paused`, `Resumed`, `OwnerProposed`,
-`OwnerTransferred`, `MinDepositUpdated`, `MaxBalanceUpdated`, `Rescued` —
-all defined with `#[contractevent]` so they're part of the contract's
-published interface spec.
+**Events:** `Deposit`, `Withdraw` (both carry `new_balance`, the vault's
+`Balance` after the op, so an indexer needn't replay history), `Paused`,
+`Resumed`, `OwnerProposed`, `OwnerProposalCancelled`, `OwnerTransferred`,
+`MinDepositUpdated`, `MaxBalanceUpdated`, `Rescued` — all defined with
+`#[contractevent]` so they're part of the contract's published interface
+spec.
 
 ### LumenVaultFactory
 
