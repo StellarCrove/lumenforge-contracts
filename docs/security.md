@@ -95,11 +95,17 @@ a vault for it is an integrator responsibility.
 Both contracts expose `extend_ttl` (and the factory additionally exposes
 `extend_vaults_by_owner_ttl` for its per-owner persistent entries), so
 instance/persistent storage TTLs *can* be bumped by anyone before they
-expire and the network archives that storage. What's still missing is a
-policy for *who actually calls these on a schedule* — there's no
-self-triggering keeper on-chain (Soroban contracts can't wake themselves
-up). This needs an off-chain cron/keeper before mainnet use, or
-integrators must be told to call it themselves periodically.
+expire and the network archives that storage. What's still missing
+*on-chain* is a policy for *who actually calls these on a schedule* —
+there's no self-triggering keeper (Soroban contracts can't wake
+themselves up); this is inherent to the platform, not something either
+contract could close on its own.
+
+`lumenforge-sdk` now ships the off-chain half of this:
+`keepAlive`/`extendTtl` (a list of targets you already have) and
+`keepOwnerVaultsAlive` (discovers a factory owner's vaults first). Using
+it is still an integration decision, not a contract guarantee — nothing
+calls it unless an integrator runs it on a schedule.
 
 ### 2. No per-depositor accounting
 
@@ -120,7 +126,10 @@ paused. There is no contract-level mechanism to freeze withdrawals if the
 `LumenVaultFactory::deploy_vault` does not generate or track salts for
 callers — a naive integration that always passes the same salt for the
 same owner will only succeed once. See
-[ADR-004](adr/004-permissionless-factory.md).
+[ADR-004](adr/004-permissionless-factory.md). `lumenforge-sdk` provides
+`randomSalt`/`ownerNonceSalt`/`deployVaultViaFactory` so most
+integrators never handle a salt directly — an ergonomic answer, not a
+change to who's responsible for it.
 
 ### 5. `rescue` trusts the owner not to grief depositors indirectly
 
@@ -188,4 +197,6 @@ rather than a public issue.
       factory as the primary integration path
 - [ ] Document a token vetting checklist (fee-on-transfer / rebasing /
       pausable-by-issuer) before recommending a `token` address to
-      integrators
+      integrators — drafted in
+      [`lumenforge-docs`](https://github.com/StellarCrove/lumenforge-docs/blob/main/docs/token-vetting-checklist.md);
+      leaving unchecked pending maintainer review
