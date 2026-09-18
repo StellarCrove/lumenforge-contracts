@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault_factory 0.3.2 - 2026-09-18
+
+### Added
+
+- `LumenVaultFactory::deploy_vault` now caps how many vaults a single
+  owner can deploy through the factory at `MAX_VAULTS_PER_OWNER` (100),
+  returning the new `Error::TooManyVaultsForOwner` past that instead of
+  growing the owner's `VaultsByOwner` entry without bound. The cap is
+  checked before the Wasm deploy runs, so a doomed call fails cheaply
+  rather than deploying a vault and then reverting. Resolves the
+  previously-documented unbounded-write limitation in
+  `docs/security.md`; direct deployment bypassing the factory is
+  unaffected.
+
 ## lumen_vault 0.4.0 - 2026-09-07
 
 ### Added

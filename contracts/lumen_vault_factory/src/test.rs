@@ -174,6 +174,54 @@ fn extend_ttl_functions_do_not_panic() {
 }
 
 #[test]
+fn deploy_vault_rejects_once_owner_hits_the_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = deploy_factory(&env);
+    let token = test_token(&env);
+    let owner = Address::generate(&env);
+
+    for i in 0..MAX_VAULTS_PER_OWNER {
+        let mut salt_bytes = [0u8; 32];
+        salt_bytes[..4].copy_from_slice(&i.to_be_bytes());
+        factory.deploy_vault(
+            &owner,
+            &token,
+            &0,
+            &None,
+            &BytesN::from_array(&env, &salt_bytes),
+        );
+    }
+    assert_eq!(factory.vaults_by_owner_count(&owner), MAX_VAULTS_PER_OWNER);
+
+    // One more, with a fresh unused salt, is rejected on the count alone.
+    let mut over_cap_salt = [0u8; 32];
+    over_cap_salt[..4].copy_from_slice(&MAX_VAULTS_PER_OWNER.to_be_bytes());
+    let result = factory.try_deploy_vault(
+        &owner,
+        &token,
+        &0,
+        &None,
+        &BytesN::from_array(&env, &over_cap_salt),
+    );
+    assert_eq!(result, Err(Ok(Error::TooManyVaultsForOwner)));
+    // The rejected attempt must not have been indexed.
+    assert_eq!(factory.vaults_by_owner_count(&owner), MAX_VAULTS_PER_OWNER);
+
+    // A different owner has their own, unaffected cap.
+    let other = Address::generate(&env);
+    factory.deploy_vault(
+        &other,
+        &token,
+        &0,
+        &None,
+        &BytesN::from_array(&env, &[0xffu8; 32]),
+    );
+    assert_eq!(factory.vaults_by_owner_count(&other), 1);
+}
+
+#[test]
 fn extend_vaults_by_owner_ttl_without_vaults_fails() {
     let env = Env::default();
     env.mock_all_auths();
