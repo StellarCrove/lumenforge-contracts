@@ -101,39 +101,28 @@ self-triggering keeper on-chain (Soroban contracts can't wake themselves
 up). This needs an off-chain cron/keeper before mainnet use, or
 integrators must be told to call it themselves periodically.
 
-### 2. `VaultsByOwner` is still an unbounded *write*, even though reads are paginated
-
-`vaults_by_owner` takes `offset`/`limit` now, so *reading* a large list
-is bounded. `deploy_vault` still appends to the same unbounded
-`Vec<Address>` on every deployment, though, so the cost of that one
-`push_back` (and the underlying entry's storage footprint) still grows
-without bound for an owner who deploys a very large number of vaults.
-Fine for the expected use case (a handful of vaults per owner); would
-need revisiting (e.g. a paginated/sharded write path) for a use case with
-unbounded per-owner vault counts.
-
-### 3. No per-depositor accounting
+### 2. No per-depositor accounting
 
 Each vault's `Balance` is a single pooled value; the contract has no
 on-chain record of who contributed what — only the owner can withdraw,
 and only in aggregate. This is an intentional design choice
 ([ADR-001](adr/001-single-balance-vault.md)), not an oversight.
 
-### 4. No emergency stop beyond `pause`
+### 3. No emergency stop beyond `pause`
 
 `pause` blocks new deposits but does not block `withdraw` — by design,
 the owner should always be able to retrieve funds, including while
 paused. There is no contract-level mechanism to freeze withdrawals if the
 *owner's* key is what's compromised; the owner is the trust root.
 
-### 5. Salt management is the caller's responsibility
+### 4. Salt management is the caller's responsibility
 
 `LumenVaultFactory::deploy_vault` does not generate or track salts for
 callers — a naive integration that always passes the same salt for the
 same owner will only succeed once. See
 [ADR-004](adr/004-permissionless-factory.md).
 
-### 6. `rescue` trusts the owner not to grief depositors indirectly
+### 5. `rescue` trusts the owner not to grief depositors indirectly
 
 `rescue` cannot move the vault's own configured `token`, but it *can*
 move any other token the vault happens to hold — including, in principle,
@@ -164,11 +153,14 @@ should be aware the owner has this reach.
 - ~~No validation on `rescue`'s amount~~ — non-positive amounts now
   rejected with `Error::InvalidAmount`, same as `deposit`/`withdraw`.
 - ~~Reading a large `VaultsByOwner` list was all-or-nothing~~ —
-  `vaults_by_owner` now takes `offset`/`limit`. The underlying write
-  path is still unbounded; see Known Limitation #2.
+  `vaults_by_owner` now takes `offset`/`limit`.
 - ~~Paginating `vaults_by_owner` had no total to page against~~ —
   `vaults_by_owner_count(owner)` added, so a caller stops at a known
   count instead of only on a short page.
+- ~~`VaultsByOwner`'s write path (`deploy_vault`'s `push_back`) grew
+  unbounded per owner~~ — capped at `MAX_VAULTS_PER_OWNER` (100);
+  `deploy_vault` now returns `Error::TooManyVaultsForOwner` past that,
+  checked before the Wasm deploy runs so a doomed call fails cheaply.
 - ~~`extend_vaults_by_owner_ttl` panicked at the host level for an owner
   with no vaults~~ — now returns `Error::NoVaultsForOwner` instead.
 - ~~`deploy_vault`'s vault-counter increment could wrap past

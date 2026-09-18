@@ -19,7 +19,18 @@ pub enum Error {
     NotInitialized = 1,
     NoVaultsForOwner = 2,
     CountOverflow = 3,
+    TooManyVaultsForOwner = 4,
 }
+
+/// Hard cap on how many vaults a single owner can deploy *through this
+/// factory* (direct deployment, bypassing the factory, is unaffected and
+/// remains uncapped). `deploy_vault` appends to `VaultsByOwner(owner)` on
+/// every call, so without a cap that entry grows without bound — see
+/// Known Limitation #2 in `docs/security.md`. 100 is generous headroom
+/// over the documented expected use case (a handful of vaults per owner)
+/// while keeping the entry's storage footprint and per-deploy write cost
+/// bounded.
+pub const MAX_VAULTS_PER_OWNER: u32 = 100;
 
 #[contracttype]
 #[derive(Clone)]
@@ -64,6 +75,19 @@ impl LumenVaultFactory {
     ) -> Result<Address, Error> {
         owner.require_auth();
 
+        // Checked first, before spending a Wasm deploy on a request that
+        // can't be indexed anyway — cheaper to fail than to deploy the
+        // vault and then revert.
+        let key = DataKey::VaultsByOwner(owner.clone());
+        let mut owned: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+        if owned.len() >= MAX_VAULTS_PER_OWNER {
+            return Err(Error::TooManyVaultsForOwner);
+        }
+
         let wasm_hash: BytesN<32> = env
             .storage()
             .instance()
@@ -85,12 +109,6 @@ impl LumenVaultFactory {
             .instance()
             .set(&DataKey::VaultCount, &next_count);
 
-        let key = DataKey::VaultsByOwner(owner.clone());
-        let mut owned: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(Vec::new(&env));
         owned.push_back(deployed.clone());
         env.storage().persistent().set(&key, &owned);
 
@@ -117,7 +135,7 @@ impl LumenVaultFactory {
     /// inferring "no more results" from a short page — `vaults_by_owner`
     /// gives no other end-of-list signal. Reading it costs the same as
     /// fetching one page (the whole `VaultsByOwner` entry is loaded either
-    /// way); see Known Limitation #2 in `docs/security.md`.
+    /// way); bounded by [`MAX_VAULTS_PER_OWNER`].
     pub fn vaults_by_owner_count(env: Env, owner: Address) -> u32 {
         env.storage()
             .persistent()
@@ -128,8 +146,8 @@ impl LumenVaultFactory {
 
     /// Returns up to `limit` vault addresses for `owner`, starting at
     /// `offset` (in deployment order). Callers with many vaults should
-    /// page through this rather than assuming a small, fixed result —
-    /// see the "unbounded vector" note in `docs/security.md`.
+    /// page through this rather than assuming a small, fixed result — up
+    /// to [`MAX_VAULTS_PER_OWNER`] of them.
     pub fn vaults_by_owner(env: Env, owner: Address, offset: u32, limit: u32) -> Vec<Address> {
         let owned: Vec<Address> = env
             .storage()

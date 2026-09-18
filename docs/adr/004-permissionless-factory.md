@@ -32,6 +32,7 @@ trigger a deployment, and how are deployed addresses kept collision-free.
   nonce, or `owner`'s address itself if one vault per owner is
   sufficient). The SDK is expected to provide a helper for this rather
   than pushing salt management onto every integrator by hand.
-- `vaults_by_owner` storage grows unbounded with an owner's vault count,
-  same caveat as any unbounded on-chain vector — see
-  [`docs/security.md`](../security.md#known-limitations).
+- `vaults_by_owner` storage grows with an owner's vault count, capped at
+  `MAX_VAULTS_PER_OWNER` (100) — `deploy_vault` returns
+  `Error::TooManyVaultsForOwner` past that rather than growing the entry
+  further. See [`docs/security.md`](../security.md#known-limitations).
