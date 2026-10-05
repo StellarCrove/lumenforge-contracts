@@ -3,7 +3,7 @@
 extern crate std;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contractmeta, contracttype, token,
-    Address, Env, MuxedAddress,
+    Address, Env, MuxedAddress, Vec,
 };
 
 contractmeta!(key = "Name", val = "lumen_vault");
@@ -141,43 +141,26 @@ impl LumenVault {
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) -> Result<i128, Error> {
-        from.require_auth();
-        if amount <= 0 {
+        Self::credit_deposit(&env, from, amount)
+    }
+
+    /// Deposits several `(from, amount)` tranches in one invocation.
+    /// Each distinct `from` must authorize the call. The batch is atomic:
+    /// if any tranche fails (amount, pause, minimum, cap, or a token that
+    /// does not deliver exactly `amount`), the whole invocation reverts
+    /// and no tranche is credited. Returns the vault balance after the
+    /// last tranche. An empty batch is `InvalidAmount`.
+    pub fn batch_deposit(env: Env, deposits: Vec<(Address, i128)>) -> Result<i128, Error> {
+        if deposits.is_empty() {
             return Err(Error::InvalidAmount);
         }
-        if Self::is_paused(&env) {
-            return Err(Error::Paused);
+        let mut last = Self::read_balance(&env);
+        for deposit in deposits.iter() {
+            let from = deposit.0.clone();
+            let amount = deposit.1;
+            last = Self::credit_deposit(&env, from, amount)?;
         }
-        if amount < Self::read_min_deposit(&env) {
-            return Err(Error::BelowMinimumDeposit);
-        }
-
-        let balance = Self::read_balance(&env);
-        let new_balance = balance.checked_add(amount).ok_or(Error::Overflow)?;
-        if let Some(max) = Self::read_max_balance(&env) {
-            if new_balance > max {
-                return Err(Error::ExceedsMaxBalance);
-            }
-        }
-
-        env.storage()
-            .instance()
-            .set(&DataKey::Balance, &new_balance);
-
-        let token_client = token::TokenClient::new(&env, &Self::read_token(&env)?);
-        token_client.transfer(
-            &from,
-            MuxedAddress::from(env.current_contract_address()),
-            &amount,
-        );
-
-        Deposit {
-            from,
-            amount,
-            new_balance,
-        }
-        .publish(&env);
-        Ok(new_balance)
+        Ok(last)
     }
 
     pub fn withdraw(env: Env, amount: i128) -> Result<i128, Error> {
@@ -417,6 +400,57 @@ impl LumenVault {
             .instance()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    }
+
+    /// Shared path for `deposit` and `batch_deposit`.
+    ///
+    /// The token balance is read before and after `transfer`. A
+    /// fee-on-transfer (or any other token that does not credit the vault
+    /// with exactly `amount`) returns `InvalidAmount`, so `Balance` cannot
+    /// drift from the tokens the vault actually holds. The storage write
+    /// happens only after that check; a mismatch returns an error and the
+    /// host reverts the transfer with it.
+    fn credit_deposit(env: &Env, from: Address, amount: i128) -> Result<i128, Error> {
+        from.require_auth();
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if Self::is_paused(env) {
+            return Err(Error::Paused);
+        }
+        if amount < Self::read_min_deposit(env) {
+            return Err(Error::BelowMinimumDeposit);
+        }
+
+        let balance = Self::read_balance(env);
+        let new_balance = balance.checked_add(amount).ok_or(Error::Overflow)?;
+        if let Some(max) = Self::read_max_balance(env) {
+            if new_balance > max {
+                return Err(Error::ExceedsMaxBalance);
+            }
+        }
+
+        let token_client = token::TokenClient::new(env, &Self::read_token(env)?);
+        let vault = env.current_contract_address();
+        let before = token_client.balance(&vault);
+        token_client.transfer(&from, MuxedAddress::from(vault.clone()), &amount);
+        let after = token_client.balance(&vault);
+        let received = after.checked_sub(before).ok_or(Error::Overflow)?;
+        if received != amount {
+            return Err(Error::InvalidAmount);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Balance, &new_balance);
+
+        Deposit {
+            from,
+            amount,
+            new_balance,
+        }
+        .publish(env);
+        Ok(new_balance)
     }
 }
 

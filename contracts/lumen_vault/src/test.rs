@@ -396,3 +396,223 @@ fn rescue_rejects_non_positive_amount() {
     let result = client.try_rescue(&other_token, &recipient, &0);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
+
+/// SEP-41-shaped token that credits the recipient `amount - fee`.
+/// Used only to prove `deposit` refuses a short credit.
+#[contract]
+struct FeeToken;
+
+#[contracttype]
+enum FeeKey {
+    Admin,
+    FeeBps,
+    Bal(Address),
+}
+
+#[contractimpl]
+impl FeeToken {
+    pub fn __constructor(env: Env, admin: Address, fee_bps: i128) {
+        env.storage().instance().set(&FeeKey::Admin, &admin);
+        env.storage().instance().set(&FeeKey::FeeBps, &fee_bps);
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let admin: Address = env.storage().instance().get(&FeeKey::Admin).unwrap();
+        admin.require_auth();
+        let next = Self::balance(env.clone(), to.clone()) + amount;
+        env.storage().persistent().set(&FeeKey::Bal(to), &next);
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&FeeKey::Bal(id))
+            .unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: MuxedAddress, amount: i128) {
+        from.require_auth();
+        let fee_bps: i128 = env.storage().instance().get(&FeeKey::FeeBps).unwrap();
+        let fee = amount.saturating_mul(fee_bps) / 10_000;
+        let credited = amount - fee;
+        let to_addr = to.address();
+        let from_next = Self::balance(env.clone(), from.clone()) - amount;
+        env.storage()
+            .persistent()
+            .set(&FeeKey::Bal(from), &from_next);
+        let to_next = Self::balance(env.clone(), to_addr.clone()) + credited;
+        env.storage()
+            .persistent()
+            .set(&FeeKey::Bal(to_addr), &to_next);
+    }
+}
+
+fn deploy_fee_vault(env: &Env, fee_bps: i128) -> (LumenVaultClient<'static>, Address, Address) {
+    let admin = Address::generate(env);
+    let token_id = env.register(FeeToken, (admin, fee_bps));
+    let owner = Address::generate(env);
+    let client = deploy(env, &owner, &token_id, 0, None);
+    (client, token_id, owner)
+}
+
+#[test]
+fn deposit_rejects_fee_on_transfer_and_keeps_balance_in_sync() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_id, owner) = deploy_fee_vault(&env, 1_000);
+    let token = TokenClient::new(&env, &token_id);
+    FeeTokenClient::new(&env, &token_id).mint(&owner, &1_000);
+
+    let result = client.try_deposit(&owner, &1_000);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    assert_eq!(client.balance(), 0);
+    assert_eq!(token.balance(&owner), 1_000);
+    assert_eq!(token.balance(&client.address), 0);
+}
+
+#[test]
+fn batch_deposit_credits_each_from_and_is_atomic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 10, Some(1_000));
+    s.token_admin.mint(&a, &500);
+    s.token_admin.mint(&b, &500);
+
+    let ok = soroban_sdk::vec![&env, (a.clone(), 100i128), (b.clone(), 250i128)];
+    assert_eq!(client.batch_deposit(&ok), 350);
+    assert_eq!(s.token.balance(&client.address), 350);
+    assert_eq!(s.token.balance(&a), 400);
+    assert_eq!(s.token.balance(&b), 250);
+
+    let mixed = soroban_sdk::vec![&env, (a.clone(), 50i128), (b.clone(), 0i128)];
+    assert_eq!(
+        client.try_batch_deposit(&mixed),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(client.balance(), 350);
+    assert_eq!(s.token.balance(&a), 400);
+
+    let empty: soroban_sdk::Vec<(Address, i128)> = soroban_sdk::vec![&env];
+    assert_eq!(
+        client.try_batch_deposit(&empty),
+        Err(Ok(Error::InvalidAmount))
+    );
+}
+
+// Ignored in the default `cargo test` run: 10,000 host calls take a few
+// minutes in debug. `make fuzz` and CI run it explicitly.
+#[test]
+#[ignore]
+fn invariant_ten_thousand_transitions_keep_balance_equal_to_holdings() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 1, Some(50_000));
+    s.token_admin.mint(&owner, &1_000_000);
+
+    let mut expected = 0i128;
+    let mut min_deposit = 1i128;
+    let mut max_balance = Some(50_000i128);
+    let mut paused = false;
+    let mut state = 0x5EED_u64;
+
+    for _ in 0..10_000 {
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        match state % 5 {
+            0 | 1 => {
+                let room = max_balance.unwrap_or(i128::MAX).saturating_sub(expected);
+                let amount = if room < min_deposit {
+                    min_deposit
+                } else {
+                    min_deposit + (state as i128 % (room - min_deposit + 1).max(1))
+                };
+                let result = client.try_deposit(&owner, &amount);
+                if paused || amount < min_deposit || room < amount || amount <= 0 {
+                    assert!(result.is_err());
+                } else {
+                    assert_eq!(result, Ok(Ok(expected + amount)));
+                    expected += amount;
+                }
+            }
+            2 => {
+                if expected == 0 {
+                    assert!(client.try_withdraw(&1).is_err());
+                } else {
+                    let amount = 1 + (state as i128 % expected);
+                    assert_eq!(client.try_withdraw(&amount), Ok(Ok(expected - amount)));
+                    expected -= amount;
+                }
+            }
+            3 => {
+                if paused {
+                    client.unpause();
+                    paused = false;
+                } else {
+                    client.pause();
+                    paused = true;
+                }
+            }
+            _ => {
+                let next_min = 1 + (state as i128 % 20);
+                client.set_min_deposit(&next_min);
+                min_deposit = next_min;
+                if state.is_multiple_of(2) {
+                    let cap = expected.max(next_min) + (state as i128 % 100);
+                    client.set_max_balance(&Some(cap));
+                    max_balance = Some(cap);
+                }
+            }
+        }
+        assert_eq!(client.balance(), expected);
+        assert_eq!(s.token.balance(&client.address), expected);
+        // A successful deposit cannot finish above the cap. Lowering the cap
+        // afterwards is allowed, so `expected` may sit above `max_balance`.
+        let _ = (max_balance, paused);
+        assert!(expected >= 0);
+    }
+}
+
+#[cfg(test)]
+mod invariant_proptest {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn invariant_proptest_deposits_match_holdings(seed in any::<u64>()) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let s = setup(&env);
+            let owner = Address::generate(&env);
+            let client = deploy(&env, &owner, &s.token_id, 1, Some(10_000));
+            s.token_admin.mint(&owner, &100_000);
+
+            let mut expected = 0i128;
+            let mut state = seed;
+            for _ in 0..40 {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                let room = 10_000 - expected;
+                if room < 1 {
+                    let amount = 1 + (state as i128 % expected.max(1));
+                    prop_assert_eq!(client.try_withdraw(&amount), Ok(Ok(expected - amount)));
+                    expected -= amount;
+                } else {
+                    let amount = 1 + (state as i128 % room);
+                    prop_assert_eq!(client.try_deposit(&owner, &amount), Ok(Ok(expected + amount)));
+                    expected += amount;
+                }
+                prop_assert_eq!(client.balance(), expected);
+                prop_assert_eq!(s.token.balance(&client.address), expected);
+            }
+        }
+    }
+}

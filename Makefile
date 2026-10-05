@@ -18,3 +18,9 @@ clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
 
 check: fmt-check clippy test
+
+# The 10k transition test is `#[ignore]`d so a normal `make test` stays
+# short. This target runs it, plus the proptest cases.
+fuzz: build
+	cargo test -p lumen-vault invariant_ -- --ignored --test-threads=1
+	cargo test -p lumen-vault invariant_proptest -- --test-threads=1

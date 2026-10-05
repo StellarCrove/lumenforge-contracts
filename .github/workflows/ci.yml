@@ -28,3 +28,6 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: Invariant tests
+        run: cargo test -p lumen-vault invariant_ten_thousand -- --ignored --test-threads=1
