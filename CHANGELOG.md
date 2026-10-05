@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.5.0 - 2026-10-05
+
+### Added
+
+- `LumenVault::batch_deposit(deposits)` credits several `(from, amount)`
+  tranches in one invocation. Every `from` authorizes the call. If any
+  tranche fails, the whole invocation reverts. An empty batch returns
+  `Error::InvalidAmount`. Each tranche still emits the existing
+  `Deposit` event.
+- `deposit` reads the vault's token balance before and after
+  `transfer`. If the token does not credit the vault with exactly
+  `amount` (fee-on-transfer, or any other short or long credit), the
+  call returns `Error::InvalidAmount` and the host reverts the
+  transfer. `Balance` therefore stays equal to the tokens the vault
+  holds for any token whose `transfer` is atomic.
+- Property coverage: a 10,000-transition test and a 32-case proptest
+  both assert that `balance()` equals the vault's real token balance
+  after deposits, withdrawals, pause, and bound changes. `make fuzz`
+  runs those two tests on their own.
+
 ## lumen_vault_factory 0.3.2 - 2026-09-18
 
 ### Added

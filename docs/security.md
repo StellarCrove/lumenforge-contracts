@@ -79,33 +79,68 @@ where `transfer(from, to, amount)` moves exactly `amount` and either
 succeeds or aborts the transaction — nothing else. Two classes of token
 would desynchronize the vault's `Balance` from its actual holdings:
 
-- **Fee-on-transfer tokens**: if the token deducts a fee so the vault
-  receives less than `amount`, `Balance` would over-state real holdings.
+- **Fee-on-transfer tokens**: `deposit` and `batch_deposit` read the
+  vault's token balance before and after `transfer`. If the credit is
+  not exactly `amount`, the call returns `Error::InvalidAmount` and the
+  transfer reverts with it, so `Balance` cannot record funds the vault
+  did not receive. These tokens are unusable with the vault, which is
+  the intended outcome. Vetting still belongs to the integrator: a
+  rejected deposit is safer than a desynced one, and it is not a
+  substitute for reading the token before choosing it.
 - **Rebasing tokens**: if the token's own accounting changes balances
   outside of `transfer` calls, `Balance` (which only moves on
   deposit/withdraw) would drift from the vault's actual token balance.
+  The before/after check does not see that drift, because it only runs
+  inside `transfer`.
 
-Neither is checked for on deployment — vetting `token` before deploying
-a vault for it is an integrator responsibility.
+The fee-on-transfer case is now rejected at deposit time. Rebasing is
+not, and is not checked on deployment — vetting `token` before
+deploying a vault for it is still an integrator responsibility.
 
 ## Known Limitations
 
-### 1. No TTL/rent *policy* (mechanism exists)
+### 1. TTL extension is a keeper's job (the schedule is now specified)
 
 Both contracts expose `extend_ttl` (and the factory additionally exposes
-`extend_vaults_by_owner_ttl` for its per-owner persistent entries), so
-instance/persistent storage TTLs *can* be bumped by anyone before they
-expire and the network archives that storage. What's still missing
-*on-chain* is a policy for *who actually calls these on a schedule* —
-there's no self-triggering keeper (Soroban contracts can't wake
-themselves up); this is inherent to the platform, not something either
-contract could close on its own.
+`extend_vaults_by_owner_ttl` for its per-owner persistent entries).
+Soroban contracts cannot wake themselves, so a keeper process has to
+call these. The schedule below is the one integrators should run.
+`lumenforge-sdk` implements it as `keepAlive` / `extendTtl` /
+`keepOwnerVaultsAlive`, and those helpers already default to these
+numbers.
 
-`lumenforge-sdk` now ships the off-chain half of this:
-`keepAlive`/`extendTtl` (a list of targets you already have) and
-`keepOwnerVaultsAlive` (discovers a factory owner's vaults first). Using
-it is still an integration decision, not a contract guarantee — nothing
-calls it unless an integrator runs it on a schedule.
+Stellar targets about one ledger every 5 seconds. The counts below use
+that rate. Ledger time is not a protocol constant, so treat the
+durations as planning numbers.
+
+| Argument | Ledgers | About | Why |
+|---|---|---|---|
+| `threshold` | 17,280 | 1 day | Extend only once the remaining TTL is inside one day. A daily keeper then has a full missed run of margin. |
+| `extend_to` | 518,400 | 30 days | After an extension, the entry lives about 30 days with no further call. |
+
+Call both of these on that schedule for every vault you care about, and
+for the factory:
+
+- `extend_ttl(17_280, 518_400)` on each vault (instance storage is the
+  whole vault) and on the factory (instance storage: wasm hash and
+  vault count).
+- `extend_vaults_by_owner_ttl(owner, 17_280, 518_400)` for each owner
+  whose index you still read. That persistent entry has its own TTL.
+
+A keeper that runs weekly must raise `threshold` above the gap between
+runs (about 120,960 ledgers is a week; 129,600 is a safer weekly
+threshold). Leaving the daily threshold in place with a weekly cron
+misses the window, and the network can archive the entry.
+
+Rent is not a fixed stroop figure in this repo. The fee is whatever
+`simulateTransaction` reports for that `extend_ttl` call: inclusion fee
+always, plus rent for the ledgers actually added when the remaining TTL
+is at or under `threshold`. A call that finds the TTL already above
+`threshold` does not write a new expiration. Read the simulated
+`minResourceFee` from the SDK keeper rather than hard-coding a price
+that the network can change. The ledger arithmetic and the worked
+example live in
+[lumenforge-docs `data-model.md`](https://github.com/StellarCrove/lumenforge-docs/blob/main/docs/data-model.md#ttl-mechanics-worked-with-real-numbers).
 
 ### 2. No per-depositor accounting
 
@@ -176,6 +211,10 @@ should be aware the owner has this reach.
   `u32::MAX`~~ — now `checked_add` / `Error::CountOverflow`.
 - ~~`withdraw`'s balance decrement used a bare `-`~~ — now `checked_sub`,
   matching `deposit`.
+- ~~Fee-on-transfer tokens could make `Balance` greater than the tokens
+  the vault holds~~ — `deposit` and `batch_deposit` now compare the
+  vault's token balance before and after `transfer` and return
+  `Error::InvalidAmount` unless the credit is exactly `amount`.
 
 ## Disclosure
 
@@ -185,8 +224,11 @@ rather than a public issue.
 
 ## Audit Checklist (pre-mainnet)
 
-- [ ] TTL/rent extension policy for `LumenVaultFactory`'s persistent
-      storage
+- [x] TTL/rent extension policy for `LumenVault` instance storage and
+      `LumenVaultFactory`'s instance and per-owner persistent storage.
+      Daily keeper, `threshold` 17,280 ledgers, `extend_to` 518,400
+      ledgers. See "TTL extension is a keeper's job" above. The fee is
+      taken from simulation, not a hard-coded stroop rate.
 - [ ] Decide on and document per-depositor accounting requirements (if
       any consumer needs them)
 - [ ] Third-party audit of `contracts/lumen_vault` and
