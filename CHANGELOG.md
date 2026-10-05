@@ -7,10 +7,14 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - `LumenVault::batch_deposit(deposits)` credits several `(from, amount)`
-  tranches in one invocation. Every `from` authorizes the call. If any
-  tranche fails, the whole invocation reverts. An empty batch returns
-  `Error::InvalidAmount`. Each tranche still emits the existing
-  `Deposit` event.
+  tranches in one invocation, capped at `MAX_BATCH_DEPOSITS` (20). The
+  length is checked before any authorization or transfer. A longer
+  batch returns `Error::BatchTooLarge` and does no work. An empty batch
+  returns `Error::InvalidAmount`. Each distinct `from` authorizes the
+  call once: a second `require_auth` for the same address in one
+  invocation is a host panic, so repeats are recognized in a list no
+  longer than the cap. If any tranche fails, the whole invocation
+  reverts. Each tranche still emits the existing `Deposit` event.
 - `deposit` reads the vault's token balance before and after
   `transfer`. If the token does not credit the vault with exactly
   `amount` (fee-on-transfer, or any other short or long credit), the

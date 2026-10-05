@@ -419,7 +419,9 @@ impl FeeToken {
     pub fn mint(env: Env, to: Address, amount: i128) {
         let admin: Address = env.storage().instance().get(&FeeKey::Admin).unwrap();
         admin.require_auth();
-        let next = Self::balance(env.clone(), to.clone()) + amount;
+        let next = Self::balance(env.clone(), to.clone())
+            .checked_add(amount)
+            .expect("fee-token mint overflow");
         env.storage().persistent().set(&FeeKey::Bal(to), &next);
     }
 
@@ -433,14 +435,18 @@ impl FeeToken {
     pub fn transfer(env: Env, from: Address, to: MuxedAddress, amount: i128) {
         from.require_auth();
         let fee_bps: i128 = env.storage().instance().get(&FeeKey::FeeBps).unwrap();
-        let fee = amount.saturating_mul(fee_bps) / 10_000;
-        let credited = amount - fee;
+        let fee = amount.checked_mul(fee_bps).expect("fee-token fee overflow") / 10_000;
+        let credited = amount.checked_sub(fee).expect("fee exceeds transfer");
         let to_addr = to.address();
-        let from_next = Self::balance(env.clone(), from.clone()) - amount;
+        let from_next = Self::balance(env.clone(), from.clone())
+            .checked_sub(amount)
+            .expect("fee-token balance underflow");
         env.storage()
             .persistent()
             .set(&FeeKey::Bal(from), &from_next);
-        let to_next = Self::balance(env.clone(), to_addr.clone()) + credited;
+        let to_next = Self::balance(env.clone(), to_addr.clone())
+            .checked_add(credited)
+            .expect("fee-token credit overflow");
         env.storage()
             .persistent()
             .set(&FeeKey::Bal(to_addr), &to_next);
@@ -503,6 +509,29 @@ fn batch_deposit_credits_each_from_and_is_atomic() {
         client.try_batch_deposit(&empty),
         Err(Ok(Error::InvalidAmount))
     );
+
+    // One past the cap must fail before any transfer. `a` still holds the
+    // balance left by the successful batch above.
+    let mut oversized: soroban_sdk::Vec<(Address, i128)> = soroban_sdk::vec![&env];
+    for _ in 0..=MAX_BATCH_DEPOSITS {
+        oversized.push_back((a.clone(), 10));
+    }
+    assert_eq!(
+        client.try_batch_deposit(&oversized),
+        Err(Ok(Error::BatchTooLarge))
+    );
+    assert_eq!(client.balance(), 350);
+    assert_eq!(s.token.balance(&a), 400);
+
+    let mut at_cap: soroban_sdk::Vec<(Address, i128)> = soroban_sdk::vec![&env];
+    for _ in 0..MAX_BATCH_DEPOSITS {
+        at_cap.push_back((a.clone(), 10));
+    }
+    assert_eq!(
+        client.batch_deposit(&at_cap),
+        350 + 10 * i128::from(MAX_BATCH_DEPOSITS)
+    );
+    assert_eq!(s.token.balance(&client.address), client.balance());
 }
 
 // Ignored in the default `cargo test` run: 10,000 host calls take a few

@@ -214,7 +214,14 @@ should be aware the owner has this reach.
 - ~~Fee-on-transfer tokens could make `Balance` greater than the tokens
   the vault holds~~ — `deposit` and `batch_deposit` now compare the
   vault's token balance before and after `transfer` and return
-  `Error::InvalidAmount` unless the credit is exactly `amount`.
+  `Error::InvalidAmount` unless the credit is exactly `amount`. A
+  balance that moves backwards is the same error; it is not reported
+  as `Overflow`.
+- ~~`batch_deposit` would loop once per caller-supplied entry with no
+  ceiling~~ — capped at `MAX_BATCH_DEPOSITS` (20). A longer argument
+  returns `Error::BatchTooLarge` before any transfer. The contract
+  still has no unbounded loop over a collection whose size the caller
+  chooses.
 
 ## Disclosure
 

@@ -26,7 +26,18 @@ pub enum Error {
     ExceedsMaxBalance = 8,
     CannotRescueVaultToken = 9,
     InvalidConfiguration = 10,
+    /// `batch_deposit` was given more than [`MAX_BATCH_DEPOSITS`] entries.
+    /// Checked before any transfer, so an oversized argument does no work.
+    BatchTooLarge = 11,
 }
+
+/// Hard cap on `batch_deposit`. The input is a caller-controlled `Vec`;
+/// without this the contract would loop once per entry (a token
+/// `transfer`, two balance reads, and an event each time). Twenty is
+/// enough for a payroll-sized batch and small enough that one invocation
+/// cannot grow without a fixed ceiling. The host still has to decode the
+/// argument; this cap is the contract's own bound on the work it will do.
+pub const MAX_BATCH_DEPOSITS: u32 = 20;
 
 #[contracttype]
 #[derive(Clone)]
@@ -145,20 +156,38 @@ impl LumenVault {
     }
 
     /// Deposits several `(from, amount)` tranches in one invocation.
-    /// Each distinct `from` must authorize the call. The batch is atomic:
-    /// if any tranche fails (amount, pause, minimum, cap, or a token that
-    /// does not deliver exactly `amount`), the whole invocation reverts
-    /// and no tranche is credited. Returns the vault balance after the
-    /// last tranche. An empty batch is `InvalidAmount`.
+    /// Each `from` must authorize the call. The batch is atomic: if any
+    /// tranche fails, the whole invocation reverts and no tranche is
+    /// credited. Returns the vault balance after the last tranche.
+    ///
+    /// An empty batch is `InvalidAmount`. More than
+    /// [`MAX_BATCH_DEPOSITS`] entries is `BatchTooLarge`, returned
+    /// before any authorization or transfer so the call fails cheaply.
     pub fn batch_deposit(env: Env, deposits: Vec<(Address, i128)>) -> Result<i128, Error> {
-        if deposits.is_empty() {
+        let count = deposits.len();
+        if count == 0 {
             return Err(Error::InvalidAmount);
+        }
+        if count > MAX_BATCH_DEPOSITS {
+            return Err(Error::BatchTooLarge);
+        }
+        // `require_auth` once per address. Calling it twice for the same
+        // address in one invocation is a host `ExistingValue` panic, not a
+        // contract error, so a repeated depositor has to be recognized here.
+        // `seen` is at most `MAX_BATCH_DEPOSITS` long.
+        let mut seen: Vec<Address> = Vec::new(&env);
+        for deposit in deposits.iter() {
+            let from = deposit.0.clone();
+            if !Self::contains_address(&seen, &from) {
+                from.require_auth();
+                seen.push_back(from);
+            }
         }
         let mut last = Self::read_balance(&env);
         for deposit in deposits.iter() {
             let from = deposit.0.clone();
             let amount = deposit.1;
-            last = Self::credit_deposit(&env, from, amount)?;
+            last = Self::apply_deposit(&env, from, amount)?;
         }
         Ok(last)
     }
@@ -410,8 +439,23 @@ impl LumenVault {
     /// drift from the tokens the vault actually holds. The storage write
     /// happens only after that check; a mismatch returns an error and the
     /// host reverts the transfer with it.
+    fn contains_address(seen: &Vec<Address>, from: &Address) -> bool {
+        for prior in seen.iter() {
+            if &prior == from {
+                return true;
+            }
+        }
+        false
+    }
+
     fn credit_deposit(env: &Env, from: Address, amount: i128) -> Result<i128, Error> {
         from.require_auth();
+        Self::apply_deposit(env, from, amount)
+    }
+
+    /// Credits `amount` after the caller has already authorized `from`.
+    /// Does not call `require_auth`.
+    fn apply_deposit(env: &Env, from: Address, amount: i128) -> Result<i128, Error> {
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -435,7 +479,13 @@ impl LumenVault {
         let before = token_client.balance(&vault);
         token_client.transfer(&from, MuxedAddress::from(vault.clone()), &amount);
         let after = token_client.balance(&vault);
-        let received = after.checked_sub(before).ok_or(Error::Overflow)?;
+        // A token balance that went backwards is not a credit. Treat every
+        // mismatch, including a subtraction that does not fit in `i128`,
+        // as `InvalidAmount` so `Balance` is only written for an exact credit.
+        let received = match after.checked_sub(before) {
+            Some(value) => value,
+            None => return Err(Error::InvalidAmount),
+        };
         if received != amount {
             return Err(Error::InvalidAmount);
         }
