@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.6.0 - 2026-10-05
+
+### Added
+
+- Optional depositor allowances, in `contracts/lumen_vault/src/allowance.rs`.
+  Off by default. `set_allowances_enabled(true)` makes `deposit` and
+  `batch_deposit` require a remaining per-address allowance, which is
+  reduced by the credited amount. `set_allowance(depositor, 0)` removes
+  a member. The member list is capped at `MAX_ALLOWANCES` (32); a new
+  address past that returns `Error::AllowanceListFull` (13). A deposit
+  over the remaining amount returns `Error::AllowanceExceeded` (12).
+  The list is instance storage, so the existing `extend_ttl` covers it.
+  See [ADR 006](docs/adr/006-depositor-allowances.md).
+
 ## lumen_vault 0.5.0 - 2026-10-05
 
 ### Added

@@ -26,6 +26,14 @@ pub enum Error {
     ExceedsMaxBalance = 8,
     CannotRescueVaultToken = 9,
     InvalidConfiguration = 10,
+    /// `batch_deposit` was given more than [`MAX_BATCH_DEPOSITS`] entries.
+    /// Checked before any transfer, so an oversized argument does no work.
+    BatchTooLarge = 11,
+    /// Allowances are on, and this deposit is larger than the remaining
+    /// allowance stored for `from`.
+    AllowanceExceeded = 12,
+    /// `set_allowance` would add a new member past [`MAX_ALLOWANCES`].
+    AllowanceListFull = 13,
 }
 
 #[contracttype]
@@ -38,6 +46,14 @@ pub enum DataKey {
     Paused,
     MinDeposit,
     MaxBalance,
+    /// When `true`, [`crate::allowance::consume`] rejects deposits that
+    /// exceed the per-address remaining amount. Absent means off, so
+    /// vaults deployed before this key existed keep the open behavior.
+    AllowancesEnabled,
+    /// Ordered member list. Length is at most [`crate::allowance::MAX_ALLOWANCES`].
+    AllowanceMembers,
+    /// Remaining deposit amount for one member. Absent means zero.
+    Allowance(Address),
 }
 
 #[contractevent]
@@ -340,6 +356,37 @@ impl LumenVault {
         Self::is_paused(&env)
     }
 
+    /// Turns the depositor allowance list on or off. Owner only. Off is
+    /// the default: existing vaults, and new ones, accept any authorized
+    /// depositor until the owner enables this.
+    pub fn set_allowances_enabled(env: Env, enabled: bool) -> Result<(), Error> {
+        let owner = Self::read_owner(&env)?;
+        owner.require_auth();
+        allowance::set_enabled(&env, enabled);
+        Ok(())
+    }
+
+    /// Sets the remaining amount `depositor` may deposit while allowances
+    /// are enabled. `amount == 0` removes them and frees a slot. Owner only.
+    pub fn set_allowance(env: Env, depositor: Address, amount: i128) -> Result<(), Error> {
+        let owner = Self::read_owner(&env)?;
+        owner.require_auth();
+        allowance::set(&env, depositor, amount)
+    }
+
+    pub fn allowances_enabled(env: Env) -> bool {
+        allowance::enabled(&env)
+    }
+
+    pub fn allowance(env: Env, depositor: Address) -> i128 {
+        allowance::read(&env, &depositor)
+    }
+
+    /// Members who currently hold a slot, at most [`allowance::MAX_ALLOWANCES`].
+    pub fn allowance_members(env: Env) -> Vec<Address> {
+        allowance::members(&env)
+    }
+
     /// Bumps this vault's instance storage TTL. Callable by anyone (they
     /// pay the fee) since keeping the vault alive benefits its owner, not
     /// the caller — there's nothing to gate. Without periodic calls to
@@ -429,6 +476,9 @@ impl LumenVault {
                 return Err(Error::ExceedsMaxBalance);
             }
         }
+        // Before the token call, so a rejected allowance does not transfer.
+        // The write reverts with the invocation if the transfer is short.
+        allowance::consume(env, &from, amount)?;
 
         let token_client = token::TokenClient::new(env, &Self::read_token(env)?);
         let vault = env.current_contract_address();
@@ -454,4 +504,5 @@ impl LumenVault {
     }
 }
 
+mod allowance;
 mod test;
