@@ -149,6 +149,11 @@ on-chain record of who contributed what — only the owner can withdraw,
 and only in aggregate. This is an intentional design choice
 ([ADR-001](adr/001-single-balance-vault.md)), not an oversight.
 
+Allowances ([ADR 006](adr/006-depositor-allowances.md)) do not change
+that. When the owner enables them, each listed address has a remaining
+amount they may still deposit. That number is a cap on inflow. It is
+not a record of what they are owed, and it does not let them withdraw.
+
 ### 3. No emergency stop beyond `pause`
 
 `pause` blocks new deposits but does not block `withdraw` — by design,

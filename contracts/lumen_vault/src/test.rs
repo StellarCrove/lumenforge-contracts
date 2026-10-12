@@ -1,4 +1,5 @@
 #![cfg(test)]
+use super::allowance::MAX_ALLOWANCES;
 use super::*;
 use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
@@ -322,6 +323,59 @@ fn extend_ttl_does_not_panic() {
     let client = deploy(&env, &owner, &s.token_id, 0, None);
 
     client.extend_ttl(&100, &1000);
+}
+
+#[test]
+fn allowances_default_off_and_cap_deposits_when_enabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let depositor = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+    s.token_admin.mint(&depositor, &10_000);
+
+    assert!(!client.allowances_enabled());
+    assert_eq!(client.deposit(&depositor, &25), 25);
+
+    client.set_allowances_enabled(&true);
+    assert!(client.allowances_enabled());
+    assert_eq!(
+        client.try_deposit(&depositor, &1),
+        Err(Ok(Error::AllowanceExceeded))
+    );
+    assert_eq!(client.balance(), 25);
+
+    client.set_allowance(&depositor, &40);
+    assert_eq!(client.allowance(&depositor), 40);
+    assert_eq!(client.deposit(&depositor, &15), 40);
+    assert_eq!(client.allowance(&depositor), 25);
+
+    assert_eq!(
+        client.try_deposit(&depositor, &26),
+        Err(Ok(Error::AllowanceExceeded))
+    );
+    assert_eq!(client.allowance(&depositor), 25);
+
+    client.set_allowance(&depositor, &0);
+    assert_eq!(client.allowance(&depositor), 0);
+    assert_eq!(client.allowance_members().len(), 0);
+
+    for i in 0..MAX_ALLOWANCES {
+        let who = Address::generate(&env);
+        client.set_allowance(&who, &(i as i128 + 1));
+    }
+    let extra = Address::generate(&env);
+    assert_eq!(
+        client.try_set_allowance(&extra, &1),
+        Err(Ok(Error::AllowanceListFull))
+    );
+    assert_eq!(client.allowance_members().len(), MAX_ALLOWANCES);
+    // Replacing an existing member does not need a new slot.
+    let first = client.allowance_members().get(0).unwrap();
+    client.set_allowance(&first, &7);
+    assert_eq!(client.allowance(&first), 7);
 }
 
 #[test]
