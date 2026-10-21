@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## lumen_vault 0.6.1 - 2026-10-21
+
+### Fixed
+
+- Defined `MAX_BATCH_DEPOSITS` (20) and enforced `Error::BatchTooLarge` (11)
+  in `LumenVault::batch_deposit` before any token transfer runs.
+- Deduplicated `from.require_auth()` per unique `from` address in
+  `batch_deposit`, preventing a Soroban host duplicate-auth panic when
+  the same depositor appears in multiple tranches of a single batch.
+- `allowance::consume` now removes a depositor from `AllowanceMembers`
+  and frees their slot when a deposit consumes their remaining allowance
+  down to `0`, matching the documented `AllowanceUpdated` invariant.
+- `Makefile`: `clippy` target now depends on `build` so `make clippy` and
+  `make check` succeed on a clean checkout where `lumen_vault.wasm` has
+  not been built yet.
+
 ## lumen_vault 0.6.0 - 2026-10-05
 
 ### Added

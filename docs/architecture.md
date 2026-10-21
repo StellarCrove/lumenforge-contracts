@@ -32,17 +32,23 @@ LumenForge is a two-contract vault protocol on Soroban:
 | `DataKey::Paused` | `bool` | When `true`, `deposit` is rejected. |
 | `DataKey::MinDeposit` | `i128` | Minimum amount accepted by `deposit`. Owner-adjustable. |
 | `DataKey::MaxBalance` | `i128` (optional) | If present, `deposit` is rejected once it would push `Balance` above this. Owner-adjustable; absent means uncapped. |
+| `DataKey::AllowancesEnabled` | `bool` | When `true`, deposits are also gated by per-address remaining allowances (`ADR 006`). Absent means off. |
+| `DataKey::AllowanceMembers` | `Vec<Address>` | Addresses currently holding a positive deposit allowance (capped at `MAX_ALLOWANCES = 32`). |
+| `DataKey::Allowance(Address)` | `i128` | Remaining deposit allowance for one address. Removed when reduced to `0`. |
 
 **Public functions:**
 
 ```rust
 fn __constructor(env: Env, owner: Address, token: Address, min_deposit: i128, max_balance: Option<i128>) -> Result<(), Error>
 fn deposit(env: Env, from: Address, amount: i128) -> Result<i128, Error>
+fn batch_deposit(env: Env, deposits: Vec<(Address, i128)>) -> Result<i128, Error>
 fn withdraw(env: Env, amount: i128) -> Result<i128, Error>
 fn pause(env: Env) -> Result<(), Error>
 fn unpause(env: Env) -> Result<(), Error>
 fn set_min_deposit(env: Env, min_deposit: i128) -> Result<(), Error>
 fn set_max_balance(env: Env, max_balance: Option<i128>) -> Result<(), Error>
+fn set_allowances_enabled(env: Env, enabled: bool) -> Result<(), Error>
+fn set_allowance(env: Env, depositor: Address, amount: i128) -> Result<(), Error>
 fn rescue(env: Env, token: Address, to: Address, amount: i128) -> Result<(), Error>
 fn propose_owner(env: Env, new_owner: Address) -> Result<(), Error>
 fn cancel_pending_owner(env: Env) -> Result<(), Error>
@@ -54,13 +60,17 @@ fn token(env: Env) -> Result<Address, Error>
 fn min_deposit(env: Env) -> i128
 fn max_balance(env: Env) -> Option<i128>
 fn paused(env: Env) -> bool
+fn allowances_enabled(env: Env) -> bool
+fn allowance(env: Env, depositor: Address) -> i128
+fn allowance_members(env: Env) -> Vec<Address>
 fn extend_ttl(env: Env, threshold: u32, extend_to: u32)
 ```
 
 **Events:** `Deposit`, `Withdraw` (both carry `new_balance`, the vault's
 `Balance` after the op, so an indexer needn't replay history), `Paused`,
 `Resumed`, `OwnerProposed`, `OwnerProposalCancelled`, `OwnerTransferred`,
-`MinDepositUpdated`, `MaxBalanceUpdated`, `Rescued` — all defined with
+`MinDepositUpdated`, `MaxBalanceUpdated`, `AllowancesToggled`,
+`AllowanceUpdated`, `Rescued` — all defined with
 `#[contractevent]` so they're part of the contract's published interface
 spec.
 
