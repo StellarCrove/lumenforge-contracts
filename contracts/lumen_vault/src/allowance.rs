@@ -118,9 +118,22 @@ pub fn consume(env: &Env, from: &Address, amount: i128) -> Result<(), Error> {
         return Err(Error::AllowanceExceeded);
     }
     let next = remaining.checked_sub(amount).ok_or(Error::Overflow)?;
-    env.storage()
-        .instance()
-        .set(&DataKey::Allowance(from.clone()), &next);
+    if next == 0 {
+        let mut listed = members(env);
+        if let Some(index) = position(&listed, from) {
+            listed.remove(index);
+            env.storage()
+                .instance()
+                .set(&DataKey::AllowanceMembers, &listed);
+        }
+        env.storage()
+            .instance()
+            .remove(&DataKey::Allowance(from.clone()));
+    } else {
+        env.storage()
+            .instance()
+            .set(&DataKey::Allowance(from.clone()), &next);
+    }
     AllowanceUpdated {
         depositor: from.clone(),
         remaining: next,

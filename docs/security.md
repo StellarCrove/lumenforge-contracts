@@ -25,16 +25,21 @@
 
 ## Authentication
 
-- `deposit` requires `from.require_auth()` — a caller can only deposit on
-  behalf of an address that has authorized the invocation. The
-  underlying token transfer additionally requires its own `from`
-  authorization internally; both must be present in the signed
+- `deposit` and `batch_deposit` require `from.require_auth()` for each
+  distinct `from` address — a caller can only deposit on behalf of an
+  address that has authorized the invocation. `batch_deposit` is capped
+  at `MAX_BATCH_DEPOSITS` (20) entries (`Error::BatchTooLarge`) and
+  deduplicates `require_auth` per unique `from` address so multiple
+  tranches from the same depositor do not trigger a host duplicate-auth
+  trap. The underlying token transfer additionally requires its own
+  `from` authorization internally; both must be present in the signed
   transaction's auth tree.
 - `withdraw`, `pause`, `unpause`, `propose_owner`,
-  `cancel_pending_owner`, `set_min_deposit`, `set_max_balance`, and
-  `rescue` all require `owner.require_auth()`, where `owner` is read from
-  storage rather than taken as a caller-supplied argument — a caller
-  cannot claim ownership by simply passing their own address.
+  `cancel_pending_owner`, `set_min_deposit`, `set_max_balance`,
+  `set_allowances_enabled`, `set_allowance`, and `rescue` all require
+  `owner.require_auth()`, where `owner` is read from storage rather than
+  taken as a caller-supplied argument — a caller cannot claim ownership
+  by simply passing their own address.
 - `accept_owner` requires `pending_owner.require_auth()`, proving control
   of the proposed address before ownership actually moves.
 - `LumenVaultFactory::deploy_vault` requires `owner.require_auth()`: a
@@ -50,12 +55,12 @@
 Soroban's execution model does not permit the classic EVM-style
 reentrancy pattern (no fallback-triggered external calls mid-execution),
 so this is not treated as a primary risk. Since a Soroban transaction is
-all-or-nothing (a panic anywhere in the call tree reverts every storage
-write in it), there is no partial-application window regardless of
-ordering — but `deposit` and `withdraw` both still update `Balance`
-*before* invoking the token's `transfer`, consistently following
-checks-effects-interactions as a defensive default rather than relying
-solely on transaction atomicity.
+all-or-nothing (a panic or `Err` anywhere in the call tree reverts every
+storage write in it), there is no partial-application window regardless
+of ordering. `withdraw` updates `Balance` before invoking the token's
+`transfer`, while `deposit`/`batch_deposit` consume any active allowance
+first, verify the vault's token balance before and after `transfer` to
+reject fee-on-transfer short credits, and then commit the new `Balance`.
 
 ## Arithmetic
 

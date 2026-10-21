@@ -12,6 +12,12 @@ contractmeta!(
     val = "Owner-gated SEP-41 deposit/withdraw vault"
 );
 
+/// Maximum number of `(from, amount)` entries accepted by a single
+/// [`LumenVault::batch_deposit`] call. Bounds per-invocation CPU/read/write
+/// resources and prevents oversized batches from doing partial work before
+/// hitting Soroban host limits.
+pub const MAX_BATCH_DEPOSITS: u32 = 20;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -32,7 +38,7 @@ pub enum Error {
     /// Allowances are on, and this deposit is larger than the remaining
     /// allowance stored for `from`.
     AllowanceExceeded = 12,
-    /// `set_allowance` would add a new member past [`MAX_ALLOWANCES`].
+    /// `set_allowance` would add a new member past [`allowance::MAX_ALLOWANCES`].
     AllowanceListFull = 13,
 }
 
@@ -157,6 +163,7 @@ impl LumenVault {
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) -> Result<i128, Error> {
+        from.require_auth();
         Self::credit_deposit(&env, from, amount)
     }
 
@@ -165,15 +172,24 @@ impl LumenVault {
     /// if any tranche fails (amount, pause, minimum, cap, or a token that
     /// does not deliver exactly `amount`), the whole invocation reverts
     /// and no tranche is credited. Returns the vault balance after the
-    /// last tranche. An empty batch is `InvalidAmount`.
+    /// last tranche. An empty batch is `InvalidAmount`; more than
+    /// [`MAX_BATCH_DEPOSITS`] entries is `BatchTooLarge`.
     pub fn batch_deposit(env: Env, deposits: Vec<(Address, i128)>) -> Result<i128, Error> {
         if deposits.is_empty() {
             return Err(Error::InvalidAmount);
         }
+        if deposits.len() > MAX_BATCH_DEPOSITS {
+            return Err(Error::BatchTooLarge);
+        }
+        let mut authed: Vec<Address> = Vec::new(&env);
         let mut last = Self::read_balance(&env);
         for deposit in deposits.iter() {
             let from = deposit.0.clone();
             let amount = deposit.1;
+            if !authed.contains(&from) {
+                from.require_auth();
+                authed.push_back(from.clone());
+            }
             last = Self::credit_deposit(&env, from, amount)?;
         }
         Ok(last)
@@ -458,7 +474,6 @@ impl LumenVault {
     /// happens only after that check; a mismatch returns an error and the
     /// host reverts the transfer with it.
     fn credit_deposit(env: &Env, from: Address, amount: i128) -> Result<i128, Error> {
-        from.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }

@@ -557,6 +557,58 @@ fn batch_deposit_credits_each_from_and_is_atomic() {
         client.try_batch_deposit(&empty),
         Err(Ok(Error::InvalidAmount))
     );
+
+    // Multiple tranches from the same depositor in a single batch must not
+    // trap the host with a duplicate require_auth error.
+    let same_depositor = soroban_sdk::vec![&env, (a.clone(), 20i128), (a.clone(), 30i128)];
+    assert_eq!(client.batch_deposit(&same_depositor), 400);
+    assert_eq!(s.token.balance(&a), 350);
+
+    // Oversized batches (> MAX_BATCH_DEPOSITS) fail with BatchTooLarge before
+    // any token transfer takes place.
+    let mut oversized = soroban_sdk::Vec::new(&env);
+    for _ in 0..=MAX_BATCH_DEPOSITS {
+        oversized.push_back((a.clone(), 10i128));
+    }
+    assert_eq!(
+        client.try_batch_deposit(&oversized),
+        Err(Ok(Error::BatchTooLarge))
+    );
+    assert_eq!(client.balance(), 400);
+    assert_eq!(s.token.balance(&a), 350);
+}
+
+#[test]
+fn consuming_full_allowance_removes_member_and_frees_slot() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let s = setup(&env);
+    let owner = Address::generate(&env);
+    let client = deploy(&env, &owner, &s.token_id, 0, None);
+    client.set_allowances_enabled(&true);
+
+    // Fill all MAX_ALLOWANCES slots.
+    let mut members = std::vec::Vec::new();
+    for _ in 0..MAX_ALLOWANCES {
+        let who = Address::generate(&env);
+        s.token_admin.mint(&who, &100);
+        client.set_allowance(&who, &50);
+        members.push(who);
+    }
+    assert_eq!(client.allowance_members().len(), MAX_ALLOWANCES);
+
+    // Exhaust the first member's entire allowance via deposit.
+    let first = &members[0];
+    assert_eq!(client.deposit(first, &50), 50);
+    assert_eq!(client.allowance(first), 0);
+    assert_eq!(client.allowance_members().len(), MAX_ALLOWANCES - 1);
+
+    // A new depositor can now be added because the slot was freed.
+    let newcomer = Address::generate(&env);
+    client.set_allowance(&newcomer, &25);
+    assert_eq!(client.allowance(&newcomer), 25);
+    assert_eq!(client.allowance_members().len(), MAX_ALLOWANCES);
 }
 
 // Ignored in the default `cargo test` run: 10,000 host calls take a few
